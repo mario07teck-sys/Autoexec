@@ -1,0 +1,250 @@
+<Window x:Class="Autoexec.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Autoexec"
+        Title="Autoexec" Width="460" Height="625" ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource Bg}"
+        FontFamily="{StaticResource Body}" Foreground="{StaticResource Text}"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType"
+        Icon="Assets/autoexec.ico">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="44" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
+
+  <Grid x:Name="Root">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="44"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- barre de titre -->
+    <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+      <Viewbox Width="20" Height="20" Margin="0,0,10,0">
+        <Canvas Width="512" Height="512">
+          <Rectangle Canvas.Left="8" Canvas.Top="8" Width="496" Height="496" RadiusX="112" RadiusY="112" Fill="#1D1A2B" Stroke="#3B3555" StrokeThickness="16"/>
+          <Path Data="M112,146 L246,256 L112,366" Stroke="#BDAEF5" StrokeThickness="72" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+          <Rectangle Canvas.Left="278" Canvas.Top="306" Width="118" Height="84" RadiusX="14" RadiusY="14" Fill="#BFF3D6"/>
+          <Rectangle Canvas.Left="386" Canvas.Top="318" Width="50" Height="60" RadiusX="8" RadiusY="8" Fill="#F5FFFA"/>
+        </Canvas>
+      </Viewbox>
+      <TextBlock Text="Autoexec" FontSize="13" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" WindowChrome.IsHitTestVisibleInChrome="True">
+      <!-- montre la langue vers laquelle on passe : EN quand l'appli est en français, FR quand elle est en anglais -->
+      <Button x:Name="BoutonLangue" Style="{StaticResource CaptionBtn}" Click="Langue_Click" ToolTip="{l:T 'Passer en anglais'}"
+              FontSize="11.5" FontWeight="SemiBold"/>
+      <Button Style="{StaticResource CaptionBtn}" Click="Min_Click" ToolTip="{l:T 'Réduire'}">
+        <Path Style="{StaticResource Icon}" Data="{StaticResource IcMin}" Width="11" Height="11" StrokeThickness="1.3"
+              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+      </Button>
+      <Button Style="{StaticResource CaptionClose}" Click="Close_Click" ToolTip="{l:T 'Fermer'}">
+        <Path Style="{StaticResource Icon}" Data="{StaticResource IcClose}" Width="11" Height="11" StrokeThickness="1.3"
+              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+      </Button>
+    </StackPanel>
+
+    <Grid Grid.Row="1" Margin="24,10,24,24">
+
+      <!-- ===== Accueil ===== -->
+      <DockPanel x:Name="PageAccueil">
+        <Button x:Name="BoutonPreparer" DockPanel.Dock="Bottom" Style="{StaticResource Primary}" Content="{l:T 'Préparer la clé'}"
+                Click="Preparer_Click" IsEnabled="False" Margin="0,14,0,0"/>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="{l:T 'Clé USB'}"/>
+            <Border x:Name="SansCle" Style="{StaticResource CardBox}">
+              <StackPanel Orientation="Horizontal">
+                <Path Style="{StaticResource Icon}" Data="{StaticResource IcUsb}" Stroke="{StaticResource Text3}" Margin="2,0,14,0" VerticalAlignment="Center"/>
+                <StackPanel>
+                  <TextBlock Text="{l:T 'Branche une clé USB'}" FontSize="14.5" FontWeight="SemiBold"/>
+                  <TextBlock Text="{l:T 'Elle apparaîtra ici.'}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+            <ListBox x:Name="Liste" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="0" Margin="-1,0,-1,-8"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="Liste_SelectionChanged">
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                  <Setter Property="Cursor" Value="Hand"/>
+                  <Setter Property="Margin" Value="0,0,0,8"/>
+                  <!-- ce qu'un lecteur d'écran annonce : le nom de la clé, pas la fiche technique -->
+                  <Setter Property="AutomationProperties.Name" Value="{Binding Nom}"/>
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="b" Background="{StaticResource Card}" BorderBrush="{StaticResource Stroke}" BorderThickness="1.5"
+                                CornerRadius="12" Padding="14,12">
+                          <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="b" Property="Background" Value="{StaticResource CardHover}"/>
+                          </Trigger>
+                          <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </ListBox.ItemContainerStyle>
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*"/>
+                      <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="{Binding Nom}" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource Text}" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Detail}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Ellipse Grid.Column="1" Width="8" Height="8" Fill="{StaticResource Ok}" VerticalAlignment="Center" Margin="12,0,2,0"/>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <TextBlock Style="{StaticResource Section}" Text="Windows" Margin="2,18,0,8"/>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+              </Grid.RowDefinitions>
+              <RadioButton x:Name="Win11" Style="{StaticResource Chip}" GroupName="windows" Content="Windows 11" IsChecked="True"/>
+              <RadioButton x:Name="Win10" Grid.Column="2" Style="{StaticResource Chip}" GroupName="windows" Content="Windows 10"
+                           Checked="Windows_Change" Unchecked="Windows_Change"/>
+              <ComboBox x:Name="Edition" Grid.Row="1" Style="{StaticResource Choix}" Margin="0,8,0,0" SelectedIndex="0"
+                        ToolTip="{l:T 'Édition de Windows'}" AutomationProperties.Name="{l:T 'Édition de Windows'}">
+                <ComboBoxItem Tag="" Content="{l:T 'Toutes les éditions'}"/>
+                <ComboBoxItem Tag="Core" Content="{l:T 'Famille'}"/>
+                <ComboBoxItem Tag="Professional" Content="{l:T 'Professionnel'}"/>
+                <ComboBoxItem Tag="Education" Content="{l:T 'Éducation'}"/>
+              </ComboBox>
+              <ComboBox x:Name="Langue" Grid.Row="1" Grid.Column="2" Style="{StaticResource Choix}" Margin="0,8,0,0"
+                        DisplayMemberPath="Value" SelectedValuePath="Key"
+                        ToolTip="{l:T 'Langue de Windows'}" AutomationProperties.Name="{l:T 'Langue de Windows'}"/>
+            </Grid>
+            <TextBlock x:Name="NoteWin10" Text="{l:T 'Windows 10 ne reçoit plus de mises à jour de sécurité.'}" FontSize="12.5"
+                       Foreground="{StaticResource Text2}" Margin="2,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+            <TextBlock Style="{StaticResource Section}" Text="{l:T 'Réglages'}" Margin="2,18,0,2"/>
+            <CheckBox x:Name="OptCompte" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Compte local, sans compte Microsoft'}"/>
+            <CheckBox x:Name="OptPilotes" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Pilotes Wi-Fi et Ethernet'}"/>
+            <CheckBox x:Name="OptQuestions" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Sans questions de confidentialité'}"/>
+            <CheckBox x:Name="OptTpm" Style="{StaticResource Switch}" Content="{l:T 'Accepter les PC sans TPM'}"/>
+            <CheckBox x:Name="OptGarder" Style="{StaticResource Switch}" Content="{l:T 'Garder le fichier Windows téléchargé'}"/>
+          </StackPanel>
+        </ScrollViewer>
+      </DockPanel>
+
+      <!-- ===== Travail en cours ===== -->
+      <DockPanel x:Name="PageTravail" Visibility="Collapsed">
+        <Button x:Name="BoutonAnnuler" DockPanel.Dock="Bottom" Style="{StaticResource Btn}" Content="{l:T 'Annuler'}" Click="Annuler_Click" Margin="0,14,0,0"/>
+        <StackPanel>
+          <Border Style="{StaticResource CardBox}">
+            <StackPanel>
+              <TextBlock x:Name="TitreTravail" FontSize="14.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+              <TextBlock Text="{l:T 'Tu peux continuer à utiliser le PC.'}" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="0,2,0,0"/>
+            </StackPanel>
+          </Border>
+          <ItemsControl x:Name="ListeEtapes" Margin="2,26,2,0" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="32"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid Width="20" Height="20" HorizontalAlignment="Left">
+                    <Ellipse x:Name="rond" Stroke="{StaticResource StrokeHi}" StrokeThickness="2"/>
+                    <Path x:Name="coche" Style="{StaticResource Icon}" Data="{StaticResource IcCheck}" Width="10" Height="10"
+                          Stroke="{StaticResource Encre}" StrokeThickness="2.6" Visibility="Collapsed"/>
+                    <Viewbox x:Name="tourne" Visibility="Collapsed">
+                      <Control Template="{StaticResource Spinner}" Focusable="False"/>
+                    </Viewbox>
+                  </Grid>
+                  <TextBlock x:Name="texte" Grid.Column="1" Text="{Binding Texte}" FontSize="14.5" Foreground="{StaticResource Text2}" VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Droite}" FontSize="13" Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                </Grid>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding Etat}" Value="encours">
+                    <Setter TargetName="rond" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="tourne" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="texte" Property="Foreground" Value="{StaticResource Text}"/>
+                    <Setter TargetName="texte" Property="FontWeight" Value="SemiBold"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding Etat}" Value="fait">
+                    <Setter TargetName="rond" Property="Fill" Value="{StaticResource Ok}"/>
+                    <Setter TargetName="rond" Property="Stroke" Value="{StaticResource Ok}"/>
+                    <Setter TargetName="coche" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="texte" Property="Foreground" Value="{StaticResource Text}"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding Etat}" Value="erreur">
+                    <Setter TargetName="rond" Property="Stroke" Value="{StaticResource Err}"/>
+                    <Setter TargetName="texte" Property="Foreground" Value="{StaticResource Err}"/>
+                  </DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <ProgressBar x:Name="Jauge" Style="{StaticResource Bar}" Margin="2,8,2,0"/>
+          <TextBlock x:Name="Reste" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="2,10,0,0" TextWrapping="Wrap"/>
+          <TextBlock x:Name="MessageErreur" FontSize="13.5" Foreground="{StaticResource Err}" Margin="2,14,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+        </StackPanel>
+      </DockPanel>
+
+      <!-- ===== Terminé ===== -->
+      <DockPanel x:Name="PageFin" Visibility="Collapsed">
+        <StackPanel DockPanel.Dock="Bottom">
+          <Button Style="{StaticResource Primary}" Content="{l:T 'Fermer'}" Click="Close_Click"/>
+          <Button Style="{StaticResource Btn}" Content="{l:T 'Préparer une autre clé'}" Click="Retour_Click" Margin="0,10,0,0"/>
+        </StackPanel>
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+          <Grid Width="84" Height="84">
+            <Ellipse Fill="#1AB9A8F2" Stroke="{StaticResource Accent}" StrokeThickness="2"/>
+            <Path Style="{StaticResource Icon}" Data="{StaticResource IcCheck}" Width="34" Height="34" Stroke="{StaticResource Ok}" StrokeThickness="2.6"/>
+          </Grid>
+          <TextBlock Text="{l:T 'La clé est prête'}" FontFamily="{StaticResource Display}" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,22,0,0"/>
+          <TextBlock Text="{l:T 'Redémarre le PC dessus pour installer Windows.'}" FontSize="14" Foreground="{StaticResource Text2}"
+                     HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
+        </StackPanel>
+      </DockPanel>
+    </Grid>
+
+    <!-- ===== Mise à jour de l'appli, au lancement : elle se fait toute seule, puis l'appli se relance ===== -->
+    <Grid x:Name="PageMiseAJour" Grid.RowSpan="2" Background="{StaticResource Bg}" Visibility="Collapsed">
+      <StackPanel VerticalAlignment="Center" Margin="48,0">
+        <TextBlock Text="{l:T 'Mise à jour en cours…'}" FontFamily="{StaticResource Display}" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+        <ProgressBar x:Name="JaugeMiseAJour" Style="{StaticResource Bar}" Margin="0,22,0,0"/>
+      </StackPanel>
+    </Grid>
+
+    <!-- ===== Dernière confirmation avant d'effacer ===== -->
+    <Grid x:Name="Confirmation" Grid.RowSpan="2" Background="#E00A0D0E" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
+      <Border Style="{StaticResource CardBox}" Padding="22" Margin="28,0" VerticalAlignment="Center">
+        <StackPanel>
+          <TextBlock x:Name="TitreConfirmation" FontFamily="{StaticResource Display}" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          <TextBlock Text="{l:T 'Tout son contenu sera perdu.'}" FontSize="14" Foreground="{StaticResource Text2}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+          <Grid Margin="0,22,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="10"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button Style="{StaticResource Btn}" Content="{l:T 'Annuler'}" Click="Refuser_Click" IsCancel="True"/>
+            <Button x:Name="BoutonConfirmer" Grid.Column="2" Style="{StaticResource Primary}" Content="{l:T 'Effacer et préparer'}" Click="Confirmer_Click"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>

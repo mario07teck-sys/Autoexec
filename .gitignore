@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+dist/
+*.user
+.vs/
+graphify-out/
+sauvegarde-cle-*/
+# notes de travail (demandes, essais, état du PC) : elles restent sur le PC, le dépôt est public
+CLAUDE.md
