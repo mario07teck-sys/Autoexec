@@ -96,12 +96,13 @@ static class Autotest
             return $"{octets.Length} octets, " + (repris ? "seconde moitié seule téléchargée" : "serveur sans reprise, fichier repris de zéro") + ", fichier abîmé refusé";
         });
 
-        foreach (var nom in Linux.Noms)
-            foreach (bool legere in new[] { false, true })
-                await Essai($"{nom}{(legere ? " (version légère)" : "")}, sur son site", async () =>
+        foreach (var d in Linux.Toutes)
+            foreach (var variante in d.CarteGraphique ? Linux.CartesGraphiques : d.Legere ? ["", "legere"] : [""])
+                await Essai($"{d.Nom}{(variante == "" ? "" : $" ({variante})")}, sur son site", async () =>
                 {
-                    var img = await Linux.Chercher(nom, legere, default);
-                    Exiger(img.Taille > 1_500_000_000 && Regex.IsMatch(img.Empreinte, "^[0-9a-f]{64}$") && Regex.IsMatch(img.Nom, @"^[\w.-]+\.iso$"), "fiche inattendue : " + img.Nom);
+                    var img = await Linux.Chercher(d.Nom, variante, default);
+                    // la plus petite, Arch, pèse 1,3 Go
+                    Exiger(img.Taille > 1_000_000_000 && Regex.IsMatch(img.Empreinte, "^[0-9a-f]{64}$") && Regex.IsMatch(img.Nom, @"^[\w.-]+\.iso$"), "fiche inattendue : " + img.Nom);
                     // deux morceaux lus à distance : la reprise marche, c'est bien un disque optique (« CD001 ») et il porte
                     // aussi une table de partitions (55 AA), sans laquelle une copie exacte ne démarrerait pas sur une clé
                     var debut = await Task.Run(() => Portion(img.Url, 0, 512));
@@ -111,12 +112,76 @@ static class Autotest
                     return $"{img.Nom}, {img.Taille / 1e9:0.00} Go, {new Uri(img.Url).Host}";
                 });
 
+        foreach (bool bits64 in new[] { true, false })
+            foreach (bool sansBureau in new[] { false, true })
+                await Essai($"Raspberry Pi OS {(bits64 ? "64" : "32")} bits{(sansBureau ? ", sans bureau" : "")}, sur son site", async () =>
+                {
+                    var pi = await Raspberry.Chercher(bits64, sansBureau, default);
+                    Exiger(pi.Fichier.Taille > 300_000_000 && pi.Taille > pi.Fichier.Taille && Regex.IsMatch(pi.Fichier.Nom, @"^[\w.-]+\.img\.xz$"), "fiche inattendue : " + pi.Fichier.Nom);
+                    // le début du vrai fichier, déplié par l'appli : c'est bien l'image d'une carte (table de partitions, 55 AA)
+                    var debut = new byte[512];
+                    using (var xz = new Xz(new MemoryStream(await Task.Run(() => Portion(pi.Fichier.Url, 0, 1 << 20)))))
+                        xz.ReadExactly(debut);
+                    Exiger(debut[510] == 0x55 && debut[511] == 0xAA, "pas de table de partitions");
+                    return $"{pi.Fichier.Nom}, {pi.Fichier.Taille / 1e9:0.00} Go, {pi.Taille / 1e9:0.00} Go une fois déplié";
+                });
+
+        await Essai("Lecture d'un fichier .xz", () => Task.Run(() =>
+        {
+            // un petit fichier fait par le compresseur de référence : ce qui en sort doit être le texte d'origine, à l'octet près
+            var attendu = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Range(0, 400).Select(i => $"ligne {i} : Autoexec prepare la cle\n")));
+            var fichier = Convert.FromBase64String("/Td6WFoAAATm1rRGAgAhARYAAAB0L+Wj4DfRAV1dADYaSRpQbGUJcyzGgXc5QO6S7ByeMJ+sqbdHWx1G+RqnTcsK4/uNVW+ObHiSZHZycUCcZkga2sZLR+Xo6ovA9xaltRtppeyQ2bq3z1lQTkMq/Am/L5Mf7wVhhAs4y6RvM+fPMOIr3kMvldZySaZ3KaliQnvf4JpceOQ9KtRTasmrzlUL5AyTsIBuURWh8R+z2rv+Sk7aVDgZ/9ZFT/LlYi7oFga1Cy1zFqDye3NOxw5t9pTh65zeTY234VGSdVI/IjIKjUc/fdQpA8YnOrvVIFgsb+FSnWtduI+T6AVrErKjtuMdHwMtngNLmYb55EFKtOsir2xv2iDyD/gxlXOM8SSMurish+Whtvf7SenBKSi29dCWw1YKvXr/vnT37QqubcHIAUVtK5pyrwFdPKfFnfwurll9C2xPzXLwPN8XsPyXL8Oqw8CvIfa9mdyYoIxse68Tst/m47OgcSRsCUUAAAAA6yre4csl4YkAAfkC0m8AAGMy3kSxxGf7AgAAAAAEWVo=");
+            var sorti = new MemoryStream();
+            using (var xz = new Xz(new MemoryStream(fichier))) xz.CopyTo(sorti, 777);
+            Exiger(sorti.ToArray().AsSpan().SequenceEqual(attendu), "le texte déplié diffère de l'original");
+            // deux flux mis bout à bout, séparés par des zéros (le format le permet) : le texte doit sortir deux fois
+            sorti.SetLength(0);
+            using (var xz = new Xz(new MemoryStream([.. fichier, 0, 0, 0, 0, .. fichier]))) xz.CopyTo(sorti);
+            Exiger(sorti.ToArray().AsSpan().SequenceEqual([.. attendu, .. attendu]), "deux flux à la suite mal lus");
+            // un fichier abîmé ne doit jamais passer pour bon : ici, coupé au milieu
+            bool refuse = false;
+            try { using var xz = new Xz(new MemoryStream(fichier, 0, fichier.Length / 2)); xz.CopyTo(Stream.Null); } catch (InvalidDataException) { refuse = true; }
+            Exiger(refuse, "un fichier coupé a été accepté");
+            return $"{fichier.Length} octets dépliés en {attendu.Length}, identiques ; deux flux à la suite ; fichier coupé refusé";
+        }));
+
+        await Essai("Copie d'une image dépliée et relecture", () => Task.Run(() =>
+        {
+            // comme pour un Raspberry Pi : l'image arrive au fil de l'eau, la « carte » est un fichier
+            string cle = Path.Combine(Path.GetTempPath(), "autoexec-carte.bin");
+            var octets = new byte[(70 << 20) + 512];
+            new Random(13).NextBytes(octets);
+            var empreinte = Convert.ToHexString(SHA256.HashData(octets)).ToLowerInvariant();
+            File.Delete(cle);
+            try
+            {
+                using (var c = File.OpenHandle(cle, FileMode.Create, FileAccess.ReadWrite))
+                    Preparation.CopierFlux(new MemoryStream(octets), c, octets.Length, empreinte);
+                var ecrit = File.ReadAllBytes(cle);
+                Exiger(ecrit.AsSpan(0, octets.Length).SequenceEqual(octets), "la copie diffère de l'image");
+                // une image qui n'a pas l'empreinte publiée ne doit pas donner de carte : son premier bloc n'est jamais écrit
+                File.Delete(cle);
+                bool refuse = false;
+                try
+                {
+                    using var c = File.OpenHandle(cle, FileMode.Create, FileAccess.ReadWrite);
+                    Preparation.CopierFlux(new MemoryStream(octets), c, octets.Length, new string('0', 64));
+                }
+                catch (InvalidDataException) { refuse = true; }
+                Exiger(refuse && File.ReadAllBytes(cle).AsSpan(0, 512).IndexOfAnyExcept((byte)0) < 0, "une image à la mauvaise empreinte a été écrite");
+                return $"{octets.Length} octets, identiques ; mauvaise empreinte refusée, début de carte laissé vide";
+            }
+            finally { File.Delete(cle); }
+        }));
+
         await Essai("Numéros de version Linux", () => Task.Run(() =>
         {
             Exiger(Linux.Numero("linuxmint-23-cinnamon-64bit.iso") == new Version(23, 0), "version sans point");
             Exiger(Linux.Numero("ubuntu-24.04.5.1-desktop-amd64.iso") > Linux.Numero("ubuntu-24.04.4-desktop-amd64.iso"), "version à quatre nombres");
             Exiger(Linux.Numero("debian-live-13.10.0-amd64-gnome.iso") > Linux.Numero("debian-live-13.8.0-amd64-gnome.iso"), "13.10 après 13.8");
-            return "sans point, à quatre nombres, 13.10 après 13.8";
+            Exiger(Linux.Numero("Zorin-OS-18.1-Core-64-bit.iso") > Linux.Numero("Zorin-OS-18-Core-64-bit-r3.iso"), "18.1 après 18");
+            Exiger(Linux.Toutes.Select(d => d.Nom).Distinct().Count() == Linux.Toutes.Length, "deux distributions du même nom");
+            return "sans point, à quatre nombres, 13.10 après 13.8, 18.1 après 18";
         }));
 
         await Essai("Copie exacte et relecture", () => Task.Run(() =>

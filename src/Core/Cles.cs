@@ -2,8 +2,9 @@ using System.Management;
 
 namespace Autoexec.Core;
 
-/// <summary>Une clé USB branchée. Chemin = identité du matériel, revérifiée juste avant d'effacer.</summary>
-record Cle(int Numero, string Nom, long Taille, string Chemin, bool Protegee)
+/// <summary>Une clé USB branchée, ou une carte mémoire dans un lecteur intégré (Carte). Chemin = identité du matériel,
+/// revérifiée juste avant d'effacer.</summary>
+record Cle(int Numero, string Nom, long Taille, string Chemin, bool Protegee, bool Carte = false)
 {
     // même unité que l'Explorateur de Windows (1 Go = 1024³ octets), pour que la taille affichée soit celle que l'on connaît
     public string Go => Textes.T("{0} Go", Math.Round(Taille / 1073741824.0));
@@ -17,7 +18,11 @@ static class Cles
 
     /// <summary>La plus petite clé que la fenêtre propose : Windows ne tient pas sur moins de 8 Go, les plus petites
     /// distributions Linux tiennent sur 4 Go, et toute clé peut être remise à neuf.</summary>
-    public static long MiniPour(string genre) => genre == "windows" ? 7_000_000_000 : genre == "linux" ? 3_500_000_000 : Mini;
+    public static long MiniPour(string genre) => genre == "windows" ? 7_000_000_000 : genre is "linux" or "raspberry" ? 3_500_000_000 : Mini;
+
+    /// <summary>Une carte mémoire dans un lecteur intégré ne sert qu'au Raspberry Pi (ou à être remise à neuf) : on ne la
+    /// propose pas pour une clé d'installation de Windows ou de Linux. Dans un lecteur USB, elle se présente comme une clé.</summary>
+    public static bool Proposee(Cle cle, string genre) => cle.Taille >= MiniPour(genre) && (!cle.Carte || genre is "raspberry" or "neuf");
 
     const string Stockage = @"root\Microsoft\Windows\Storage";
 
@@ -47,7 +52,8 @@ static class Cles
 
         var cles = new List<Cle>();
         using var disques = new ManagementObjectSearcher(Stockage,
-            "SELECT Number, FriendlyName, Size, Path, IsBoot, IsSystem, IsReadOnly FROM MSFT_Disk WHERE BusType = 7"); // 7 = USB
+            // 7 = USB ; 12 et 13 = carte SD ou MMC dans un lecteur intégré au PC (les mêmes garde-fous s'y appliquent)
+            "SELECT Number, FriendlyName, Size, Path, IsBoot, IsSystem, IsReadOnly, BusType FROM MSFT_Disk WHERE BusType = 7 OR BusType = 12 OR BusType = 13");
         foreach (ManagementObject d in disques.Get())
             using (d)
             {
@@ -56,7 +62,7 @@ static class Cles
                 if (!amovibles.Contains(numero) || interdits.Contains(numero) || (bool)(d["IsBoot"] ?? false) || (bool)(d["IsSystem"] ?? false)
                     || taille < Mini || taille > Maxi) continue;
                 var nom = (d["FriendlyName"] as string ?? Textes.T("Clé USB")).Replace("USB ", "").Trim();
-                cles.Add(new Cle(numero, nom, taille, d["Path"] as string ?? "", (bool)(d["IsReadOnly"] ?? false)));
+                cles.Add(new Cle(numero, nom, taille, d["Path"] as string ?? "", (bool)(d["IsReadOnly"] ?? false), Convert.ToInt32(d["BusType"]) != 7));
             }
         return cles.OrderBy(c => c.Numero).ToList();
     }

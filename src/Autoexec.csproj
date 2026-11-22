@@ -11,7 +11,7 @@
     <AssemblyName>Autoexec</AssemblyName>
     <ApplicationIcon>Assets\autoexec.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.1.5</Version>
     <Product>Autoexec</Product>
     <Company>Mario Teck</Company>
     <Copyright>© 2026 Mario Teck</Copyright>

@@ -1,12 +1,12 @@
 # Autoexec
 
-Prépare toute seule une clé USB d'installation de Windows 10 ou 11, ou de Linux (Ubuntu, Linux Mint, Debian, Fedora) : on branche la clé, on choisit, on clique sur « Préparer la clé ».
+Prépare toute seule une clé USB d'installation de Windows 10 ou 11, ou de Linux (Ubuntu, Linux Mint, Debian, Fedora, Zorin OS, Bazzite, Kali, Arch), ou la carte d'un Raspberry Pi : on branche la clé, on choisit, on clique sur « Préparer la clé ».
 
 Un seul fichier, `Autoexec.exe`, sans installation : on le lance, c'est tout. En français ou en anglais (bouton `EN` / `FR` en haut de la fenêtre). L'appli se met à jour toute seule au lancement.
 
 ## Ce que fait l'appli
 
-Au lancement, on choisit : **Windows**, **Linux**, ou **remettre une clé à neuf**.
+Au lancement, on choisit : **Windows**, **Linux**, plus discrètement **Raspberry Pi**, ou **remettre une clé à neuf**.
 
 ### Windows
 
@@ -24,13 +24,29 @@ Tant que l'appli est ouverte, la lecture automatique de Windows est coupée pour
    - Ubuntu : la version « longue durée » en cours (`changelogs.ubuntu.com/meta-release-lts`), puis `releases.ubuntu.com/<version>/SHA256SUMS` ;
    - Linux Mint : le dossier le plus récent de `mirrors.kernel.org/linuxmint/stable/`, puis son `sha256sum.txt` (Mint n'a pas de serveur central, seulement des miroirs) ;
    - Debian : `cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS` (image « live » avec bureau GNOME) ;
-   - Fedora : `fedoraproject.org/releases.json` (Workstation ; les versions bêta sont écartées).
+   - Fedora : `fedoraproject.org/releases.json` (Workstation ; les versions bêta sont écartées) ;
+   - Zorin OS : le dossier le plus récent de `mirrors.kernel.org/zorinos-isos/`, puis son `SHA256SUMS.txt` (édition Core ; les versions « Beta » sont écartées, et la révision la plus récente d'un même numéro est prise) ;
+   - Bazzite (pour jouer) : `download.bazzite.gg/bazzite-stable-live-amd64.iso` et son fichier `-CHECKSUM`, le fichier « live » que propose `bazzite.gg` (`bazzite-stable-amd64.iso`, sans « live », est l'ancien installeur, figé en octobre 2025). Son fichier dépend de la carte graphique du PC à équiper : une liste propose AMD ou Intel, NVIDIA récente (RTX, GTX 16 : `bazzite-nvidia-open-…`) ou NVIDIA plus ancienne (GTX 9 et 10 : `bazzite-nvidia-…`) ;
+   - Kali : `cdimage.kali.org/current/SHA256SUMS`. C'est son **installeur** : l'image à essayer sans installer n'est distribuée que par torrent ;
+   - Arch : `geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt`. Tout s'y installe à la main, au clavier.
 2. **Télécharge le fichier `.iso`**, avec reprise après coupure, et vérifie son empreinte.
-3. **Vide la clé**, puis y **copie le fichier tel quel**, secteur par secteur : c'est ce que demandent ces quatre distributions, dont le fichier est déjà l'image d'une clé qui démarre, sur les PC récents (UEFI, Secure Boot) comme sur les anciens (BIOS). Le premier bloc, qui porte la table des partitions, est écrit en dernier : tant qu'il manque, Windows ne voit rien sur la clé.
+3. **Vide la clé**, puis y **copie le fichier tel quel**, secteur par secteur : c'est ce que demandent ces distributions, dont le fichier est déjà l'image d'une clé qui démarre. Le premier bloc, qui porte la table des partitions, est écrit en dernier : tant qu'il manque, Windows ne voit rien sur la clé.
 4. **Relit toute la clé** et la compare au fichier.
 5. **Éjecte la clé**. Windows ne sait pas lire une clé Linux : s'il la relit, il réécrit un secteur de sa table, lui donne une lettre et propose de la formater. Fedora, qui se contrôle elle-même au démarrage, refuse alors la clé (il faut choisir « Start Fedora » au lieu de l'entrée par défaut).
 
-« Version légère, pour un PC ancien » prend le même système avec le bureau Xfce, qui demande moins de mémoire : Xubuntu, Linux Mint Xfce, Debian Xfce, Fedora Xfce.
+« Version légère, pour un PC ancien » prend le même système avec un bureau qui demande moins de mémoire : Xubuntu, Linux Mint Xfce, Debian Xfce, Fedora Xfce, Zorin OS Lite. Bazzite, Kali et Arch n'en ont pas : l'interrupteur n'apparaît alors pas (pour Bazzite, la liste « Carte graphique » prend sa place).
+
+**Secure Boot** : Arch et Kali ne démarrent pas sur un PC où il est activé (vu en machine virtuelle : « The unsigned image's hash is not allowed »). L'écran de fin le dit pour elles : couper « Secure Boot » dans les réglages du PC. Les six autres démarrent Secure Boot activé. Bazzite installé, lui, demande au premier redémarrage d'inscrire sa clé sur un écran bleu (mot de passe `universalblue`, clavier américain) : l'écran de fin le dit. La clé Bazzite ne démarre pas sur un PC ancien (BIOS), seulement en UEFI.
+
+### Raspberry Pi
+
+1. **Trouve la dernière version de Raspberry Pi OS** dans la liste que Raspberry publie pour son propre outil (`downloads.raspberrypi.com/os_list_imagingutility_v4.json`) : « Pi 3, 4 ou 5 » (aussi Pi 400, 500, Zero 2 W) prend la version 64 bits, « Plus ancien » (Pi 1, Pi 2, Zero, Zero W) la version 32 bits. « Sans bureau, pour un serveur » prend la version « Lite ».
+2. **Télécharge le fichier `.img.xz`** et vérifie son empreinte (publiée à côté de lui, dans `<fichier>.sha256`).
+3. **Vide la carte**, puis y **écrit l'image en la dépliant au fil de l'eau** : ni Windows ni .NET ne savent lire un `.xz`, l'appli a son propre lecteur (`src\Core\Xz.cs`, écrit d'après les spécifications publiques des formats xz et LZMA), sans rien installer ni rien écrire sur le disque du PC.
+4. **Relit toute la carte** : son empreinte SHA-256 doit être celle que Raspberry publie pour l'image dépliée. Le premier bloc n'est écrit qu'après ce contrôle.
+5. **Éjecte la carte**.
+
+Une carte SD dans un lecteur USB se présente comme une clé. Celle d'un lecteur intégré au PC est proposée aussi, sur cette page et pour « remettre à neuf » seulement. Non fait : régler d'avance le nom d'utilisateur, le Wi-Fi ou l'accès à distance, comme le propose l'outil de Raspberry (au premier démarrage, il faut donc un écran et un clavier).
 
 ### Remettre une clé à neuf
 
@@ -70,7 +86,7 @@ Limites : aucun lot ne couvre tout ; les pilotes ne valent que pour les PC à pr
 
 - `src\MainWindow.xaml(.cs)` : la fenêtre, sans droits d'administrateur.
 - `src\Core\Preparation.cs` : le travail en administrateur (`Autoexec.exe --preparer travail.json`), seul à toucher la clé. Il écrit son avancement dans `%LOCALAPPDATA%\Autoexec\travail\etat.txt`.
-- `src\Core\Catalogue.cs` (Windows), `Linux.cs` (les quatre distributions), `Telechargement.cs`, `Wim.cs`, `Reglages.cs`, `Pilotes.cs`, `Cles.cs`, `MiseAJour.cs` : une brique par fichier.
+- `src\Core\Catalogue.cs` (Windows), `Linux.cs` (les huit distributions : une ligne par distribution dans `Linux.Toutes`), `Raspberry.cs` (Raspberry Pi OS), `Xz.cs` (lecteur de fichiers `.xz`), `Telechargement.cs`, `Wim.cs`, `Reglages.cs`, `Pilotes.cs`, `Cles.cs`, `MiseAJour.cs` : une brique par fichier.
 - `src\Textes.cs` : les deux langues de l'appli. Le texte français sert de clé (`Textes.T("…")` dans le code, `{l:T '…'}` dans la fenêtre) ; l'anglais est dans le dictionnaire `Textes.En`.
 - `build.ps1` : fabrique l'exe unique, `dist\Autoexec.exe`.
 - `tools\make-icon.ps1` : régénère `src\Assets\autoexec.ico`.
@@ -86,7 +102,7 @@ src\bin\Debug\net10.0-windows10.0.19041.0\Autoexec.exe --autotest   # rapport : 
 .\build.ps1                                                          # l'exe unique : dist\Autoexec.exe
 ```
 
-L'autotest vérifie tout ce qui se vérifie sans droits d'administrateur ni clé à effacer : catalogue, structure du fichier Windows (lue à distance), reprise de téléchargement, dernière version des quatre distributions Linux et de leur version légère (avec un morceau lu à distance), copie exacte et relecture (sur un fichier), fichier de réglages, script d'effacement, pilotes de ce PC, pilotes des cartes courantes (toujours présents chez Microsoft, à la bonne taille), clés branchées. L'écriture d'une clé se teste avec une vraie clé.
+L'autotest vérifie tout ce qui se vérifie sans droits d'administrateur ni clé à effacer : catalogue, structure du fichier Windows (lue à distance), reprise de téléchargement, dernière version des huit distributions Linux et de leurs variantes (avec un morceau lu à distance), les quatre images de Raspberry Pi OS (leur début est déplié et doit porter une table de partitions), lecture d'un fichier `.xz` de référence, copie exacte et relecture (sur un fichier), copie d'une image dépliée et relecture, fichier de réglages, script d'effacement, pilotes de ce PC, pilotes des cartes courantes (toujours présents chez Microsoft, à la bonne taille), clés branchées. L'écriture d'une clé se teste avec une vraie clé.
 
 ## Publier une version
 
@@ -98,10 +114,11 @@ Au lancement, l'appli demande à GitHub la dernière publication du dépôt (`Mi
 
 ## Sécurité
 
-- Seules les clés sont proposées : disques USB que Windows déclare amovibles, jusqu'à 300 Go (au moins 7 Go pour Windows, 3,5 Go pour Linux, 1 Go pour une clé à remettre à neuf), qui ne portent pas Windows. Un disque dur ou un SSD externe n'apparaît pas.
+- Seules les clés sont proposées : disques USB que Windows déclare amovibles, jusqu'à 300 Go (au moins 7 Go pour Windows, 3,5 Go pour Linux et Raspberry Pi, 1 Go pour une clé à remettre à neuf), qui ne portent pas Windows. Un disque dur ou un SSD externe n'apparaît pas. Une carte mémoire dans un lecteur intégré au PC n'est proposée que pour un Raspberry Pi ou pour être remise à neuf.
 - Le travail en administrateur revérifie le numéro, le matériel et la taille de la clé juste avant d'effacer.
 - Le lien de téléchargement de Windows doit pointer chez Microsoft, et le fichier doit avoir l'empreinte annoncée par le catalogue.
-- Un fichier Linux vient du site de sa distribution (pour Linux Mint, du miroir de kernel.org), en HTTPS, et doit avoir l'empreinte SHA-256 publiée à côté de lui. Son nom ne passe que s'il a exactement la forme attendue.
+- Un fichier Linux vient du site de sa distribution (pour Linux Mint et Zorin OS, du miroir de kernel.org), en HTTPS, et doit avoir l'empreinte SHA-256 publiée à côté de lui. Son nom ne passe que s'il a exactement la forme attendue.
+- L'image d'un Raspberry Pi doit venir de `downloads.raspberrypi.com` ; le fichier téléchargé puis l'image écrite sur la carte doivent avoir les empreintes SHA-256 publiées par Raspberry. Le lecteur `.xz` de l'appli ne décide donc jamais seul qu'une image est bonne.
 - Avant d'effacer, la question nomme la clé ; si une autre clé a pris sa place entre la question et la réponse, rien n'est effacé.
 - Une seule fenêtre et un seul travail à la fois : relancer l'appli ramène la fenêtre déjà ouverte, et un second travail en administrateur est refusé tant que le premier tient le dossier de travail.
 - Un arrêt demandé après le début de l'effacement est dit comme tel : la clé est à refaire.

@@ -48,7 +48,8 @@ public partial class MainWindow : Window
     long _fait, _total, _depart;
     string _erreurTravail;
     static bool _miseAJourCherchee; // une fois par lancement, pas à chaque changement de langue
-    static string _genre; // « windows », « linux » ou « neuf » : gardé quand la fenêtre se rouvre pour changer de langue
+    static string _genre; // « windows », « linux », « raspberry » ou « neuf » : gardé quand la fenêtre se rouvre pour changer de langue
+    Distribution _distribution = Linux.Toutes[0];
 
     public MainWindow()
     {
@@ -139,7 +140,7 @@ public partial class MainWindow : Window
         List<Cle> trouvees;
         try { trouvees = await Task.Run(Cles.Lister); }
         catch (Exception ex) { Journal.Ecrire("Liste des clés : " + ex.Message); trouvees = new(); }
-        trouvees.RemoveAll(c => c.Taille < Cles.MiniPour(_genre));
+        trouvees.RemoveAll(c => !Cles.Proposee(c, _genre));
         var choisie = (Liste.SelectedItem as Cle)?.Chemin;
         _cles.Clear();
         foreach (var c in trouvees) _cles.Add(c);
@@ -159,16 +160,23 @@ public partial class MainWindow : Window
         OptTpm.IsEnabled = !dix; // seul Windows 11 exige un TPM
     }
 
-    /// <summary>La distribution choisie : son nom pour le catalogue, et une phrase pour qui ne sait pas laquelle prendre.</summary>
-    (string Nom, string Note) Distribution =>
-        Mint.IsChecked == true ? ("Linux Mint", "Le plus proche de Windows : idéal pour débuter.")
-        : Debian.IsChecked == true ? ("Debian", "Sobre et très stable.")
-        : Fedora.IsChecked == true ? ("Fedora", "Les nouveautés en premier.")
-        : ("Ubuntu", "Le plus répandu : on trouve de l'aide partout.");
+    static Visibility Si(bool vrai) => vrai ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>Une distribution est choisie : sa phrase d'aide, et ce qu'elle propose (version légère, ou choix de la carte graphique).</summary>
     void Linux_Change(object sender, RoutedEventArgs e)
     {
-        if (NoteLinux != null) NoteLinux.Text = Textes.T(Distribution.Note); // pas encore là quand la fenêtre se construit
+        if (sender is RadioButton { Tag: string nom }) _distribution = Linux.Toutes.First(d => d.Nom == nom);
+        if (OptLegere == null) return; // la fenêtre se construit encore
+        NoteLinux.Text = Textes.T(_distribution.Note);
+        Carte.Visibility = Si(_distribution.CarteGraphique);
+        // montré seulement quand la version légère existe : un interrupteur grisé mais coché promettrait ce qu'on ne fait pas
+        OptLegere.Visibility = Si(_genre == "linux" && _distribution.Legere);
+    }
+
+    void Raspberry_Change(object sender, RoutedEventArgs e)
+    {
+        if (NoteRaspberry == null) return; // la fenêtre se construit encore
+        NoteRaspberry.Text = Textes.T(PiAncien.IsChecked == true ? "Pour les Pi 1, Pi 2, Zero et Zero W." : "Aussi pour les Pi 400, 500 et Zero 2 W.");
     }
 
     void Choix_Click(object sender, RoutedEventArgs e) => Choisir((string)((FrameworkElement)sender).Tag);
@@ -176,14 +184,19 @@ public partial class MainWindow : Window
     void Choisir(string genre)
     {
         _genre = genre;
-        Visibility Si(bool vrai) => vrai ? Visibility.Visible : Visibility.Collapsed;
+        bool pi = genre == "raspberry";
         BlocWindows.Visibility = ReglagesWindows.Visibility = Si(genre == "windows");
-        BlocLinux.Visibility = OptLegere.Visibility = Si(genre == "linux");
+        BlocLinux.Visibility = Si(genre == "linux");
+        BlocRaspberry.Visibility = OptSansBureau.Visibility = Si(pi);
         BlocReglages.Visibility = Si(genre != "neuf");
         NoteNeuf.Visibility = Si(genre == "neuf");
-        BoutonPreparer.Content = Textes.T(genre == "neuf" ? "Remettre la clé à neuf" : "Préparer la clé");
+        // un Raspberry Pi démarre le plus souvent sur une carte SD : sur sa page, on parle de carte
+        TitreCle.Text = Textes.T(pi ? "Carte SD ou clé USB" : "Clé USB");
+        TexteSansCle.Text = Textes.T(pi ? "Branche une carte SD" : "Branche une clé USB");
+        BoutonPreparer.Content = Textes.T(genre == "neuf" ? "Remettre la clé à neuf" : pi ? "Préparer la carte" : "Préparer la clé");
         BoutonConfirmer.Content = Textes.T(genre == "neuf" ? "Effacer" : "Effacer et préparer");
         Linux_Change(null, null);
+        Raspberry_Change(null, null);
         Montrer(PageAccueil);
         _ = Rafraichir(); // la plus petite clé proposée dépend de ce qu'on veut en faire
     }
@@ -215,8 +228,12 @@ public partial class MainWindow : Window
 
     async Task Travailler(Cle cle)
     {
-        string genre = _genre, distribution = Distribution.Nom;
-        bool win = genre == "windows", linux = genre == "linux", legere = OptLegere.IsChecked == true;
+        string genre = _genre, distribution = genre == "raspberry" ? "Raspberry Pi OS" : _distribution.Nom;
+        bool win = genre == "windows", linux = genre == "linux", pi = genre == "raspberry", copie = linux || pi; // copie : l'image va telle quelle sur la clé
+        bool pi64 = PiAncien.IsChecked != true, sansBureau = OptSansBureau.IsChecked == true;
+        var choisie = _distribution;
+        // Bazzite : une image par famille de carte graphique ; les autres : la version légère quand elle existe
+        string variante = choisie.CarteGraphique ? (string)((ComboBoxItem)Carte.SelectedItem).Tag : choisie.Legere && OptLegere.IsChecked == true ? "legere" : "";
         int windows = Win10.IsChecked == true ? 10 : 11;
         // les réglages de Windows ne valent que pour Windows
         bool compte = win && OptCompte.IsChecked == true, questions = win && OptQuestions.IsChecked == true, tpm = win && windows == 11 && OptTpm.IsChecked == true,
@@ -228,20 +245,30 @@ public partial class MainWindow : Window
         (string, string)[] etapes = win ? [("telechargement", "Téléchargement"), ("windows", "Préparation de Windows"),
                 ("finitions", "Pilotes et réglages"), ("cle", "Effacement de la clé"), ("copie", "Copie sur la clé"), ("verif", "Vérification de la clé")]
             : linux ? [("telechargement", "Téléchargement"), ("cle", "Effacement de la clé"), ("copie", "Copie sur la clé"), ("verif", "Vérification de la clé")]
+            : pi ? [("telechargement", "Téléchargement"), ("cle", "Effacement de la carte"), ("copie", "Copie sur la carte"), ("verif", "Vérification de la carte")]
             : [("cle", "Effacement de la clé")];
         foreach (var (code, texte) in etapes) _etapes.Add(new Etape { Code = code, Texte = Textes.T(texte) });
-        TitreTravail.Text = win ? Textes.T("Windows {0} sur {1}", windows, cle.Nom) : linux ? Textes.T("{0} sur {1}", distribution, cle.Nom) : cle.Nom;
+        TitreTravail.Text = win ? Textes.T("Windows {0} sur {1}", windows, cle.Nom) : copie ? Textes.T("{0} sur {1}", distribution, cle.Nom) : cle.Nom;
+        TitreFin.Text = Textes.T(pi ? "La carte est prête" : "La clé est prête");
         TexteFin.Text = win ? Textes.T("Redémarre le PC dessus pour installer Windows.")
-            : linux ? Textes.T("Retire-la, puis démarre un PC dessus pour essayer ou installer {0}.", distribution) : Textes.T("Elle est vide, comme une clé neuve.");
+            : pi ? Textes.T("Retire-la, mets-la dans le Raspberry Pi, puis allume-le.")
+            // Kali et Arch ne se téléchargent qu'en clé d'installation : on ne promet pas d'essai
+            : linux ? Textes.T(choisie.Essai ? "Retire-la, puis démarre un PC dessus pour essayer ou installer {0}." : "Retire-la, puis démarre un PC dessus pour installer {0}.", distribution)
+            : Textes.T("Elle est vide, comme une clé neuve.");
         // Windows ne sait pas lire une clé Linux, et il en réécrit un secteur dès qu'il la revoit : Fedora, qui se contrôle
         // elle-même au démarrage, s'en aperçoit (vu le 22/11/2026)
-        NoteFin.Text = distribution == "Fedora"
+        NoteFin.Text = pi ? Textes.T("Au premier démarrage, il lui faut un écran et un clavier.")
+            : distribution == "Fedora"
             ? Textes.T("Évite de la rebrancher sous Windows : il la modifie, et Fedora la dirait abîmée. Si cela arrive, choisis « Start Fedora » au démarrage.")
             : Textes.T("Sous Windows, cette clé ne se lit pas. S'il propose de la formater, réponds Annuler.")
               // vu le 22/11/2026 sur une machine ancienne (BIOS), avec la clé comme avec le DVD officiel : l'entrée par
               // défaut de Mint n'affiche pas son bureau, la deuxième ligne du menu si
-              + (distribution == "Linux Mint" ? " " + Textes.T("Si l'écran reste noir au démarrage, choisis « compatibility mode ».") : "");
-        NoteFin.Visibility = linux ? Visibility.Visible : Visibility.Collapsed;
+              + (distribution == "Linux Mint" ? " " + Textes.T("Si l'écran reste noir au démarrage, choisis « compatibility mode ».") : "")
+              // vu le 22/11/2026 en machine virtuelle, Secure Boot activé : après l'installation, l'écran bleu de MokManager
+              // (clavier américain) ; sans cette étape, Bazzite installé ne démarre pas Secure Boot activé (sa documentation)
+              + (distribution == "Bazzite" ? " " + Textes.T("Après l'installation, un écran bleu peut s'afficher : choisis « Enroll MOK », « Continue », « Yes », puis tape universalblue. Sur un clavier français, tape Q à la place du A.") : "")
+              + (choisie.SecureBoot ? "" : " " + Textes.T("Si le PC refuse de démarrer dessus, coupe « Secure Boot » dans ses réglages."));
+        NoteFin.Visibility = Si(copie);
         MessageErreur.Visibility = Visibility.Collapsed;
         BoutonAnnuler.Content = Textes.T("Annuler");
         BoutonAnnuler.IsEnabled = true;
@@ -255,6 +282,7 @@ public partial class MainWindow : Window
         _cleEffacee = false;
         SetThreadExecutionState(0x80000001); // pas de mise en veille pendant le travail
         string fichier = null;
+        Raspberry.Image raspberry = null;
         bool reussi = false;
         try
         {
@@ -263,10 +291,13 @@ public partial class MainWindow : Window
             if (genre != "neuf") // une clé remise à neuf n'a rien à télécharger
             {
                 Avancer("telechargement", 0);
-                var img = linux ? await Linux.Chercher(distribution, legere, ct) : await Catalogue.Chercher(windows, langue, ct);
-                // Linux : la taille du fichier est celle qu'il prendra sur la clé. Trop petite, autant le dire avant de télécharger.
-                if (linux && img.Taille + Preparation.Bloc > cle.Taille)
-                    throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((img.Taille + Preparation.Bloc) / 1e9)));
+                if (pi) raspberry = await Raspberry.Chercher(pi64, sansBureau, ct);
+                var img = pi ? raspberry.Fichier : linux ? await Linux.Chercher(distribution, variante, ct) : await Catalogue.Chercher(windows, langue, ct);
+                // Linux : la taille du fichier est celle qu'il prendra sur la clé (pour un Raspberry Pi, celle de l'image une
+                // fois dépliée). Trop petite, autant le dire avant de télécharger, et dans l'unité de la liste des clés.
+                long surCle = pi ? raspberry.Taille : img.Taille;
+                if (copie && surCle + Preparation.Bloc > cle.Taille)
+                    throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((surCle + Preparation.Bloc) / 1073741824.0)));
                 fichier = Path.Combine(Cache, img.Nom);
 
                 // place nécessaire : le fichier (s'il n'est pas déjà là), puis, pour Windows, sa version dépliée avant l'envoi
@@ -278,7 +309,7 @@ public partial class MainWindow : Window
                 // (3,5 fois depuis que le .wim à découper est compressé vite : il sort à 6,5 Go au lieu de 6,0)
                 long besoin = img.Taille - deja + (win ? img.Taille * (img.Taille > Preparation.MaxFat32 ? 7 : 3) / 2 : 0) + lot * 5, libre = new DriveInfo(Path.GetPathRoot(Cache)).AvailableFreeSpace;
                 if (libre < besoin)
-                    throw new InvalidOperationException(Textes.T("Il manque {0} Go de place sur le disque {1}", Math.Ceiling((besoin - libre) / 1e9), Path.GetPathRoot(Cache)));
+                    throw new InvalidOperationException(Textes.T("Il manque {0} Go de place sur le disque {1}", Math.Ceiling((besoin - libre) / 1073741824.0), Path.GetPathRoot(Cache)));
 
                 // une seule jauge pour Windows puis les pilotes : elle ne repart pas de zéro entre les deux
                 _fait = 0; _total = img.Taille + lot; _depart = -1; _verification = false;
@@ -310,7 +341,8 @@ public partial class MainWindow : Window
             if (Reglages.Fabriquer(compte, questions, tpm) is { } doc) doc.Save(reglages = Path.Combine(DossierTravail, "reglages.xml"));
             // la liste des pilotes se remplit en arrière-plan à l'ouverture : on l'attend, sinon un clic rapide les oublierait
             var travail = new Preparation.Travail(cle.Numero, cle.Chemin, cle.Taille, fichier, edition, reglages, tpm,
-                pilotes ? (await _recherchePilotes).Select(p => p.Inf).ToArray() : [], paquets.ToArray(), DossierTravail, Textes.Anglais, genre);
+                pilotes ? (await _recherchePilotes).Select(p => p.Inf).ToArray() : [], paquets.ToArray(), DossierTravail, Textes.Anglais, genre,
+                raspberry?.Taille ?? 0, raspberry?.Empreinte);
             var fichierTravail = Path.Combine(DossierTravail, "travail.json");
             File.WriteAllText(fichierTravail, JsonSerializer.Serialize(travail));
 

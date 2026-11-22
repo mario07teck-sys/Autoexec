@@ -168,12 +168,13 @@
     <Style x:Key="Chip" TargetType="RadioButton">
       <Setter Property="Foreground" Value="{StaticResource Text2}"/>
       <Setter Property="FontSize" Value="14.5"/>
+      <Setter Property="Padding" Value="16,11"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
-            <Border x:Name="b" CornerRadius="12" Background="{StaticResource Card}" BorderBrush="{StaticResource Stroke}" BorderThickness="1.5" Padding="16,11">
+            <Border x:Name="b" CornerRadius="12" Background="{StaticResource Card}" BorderBrush="{StaticResource Stroke}" BorderThickness="1.5" Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>

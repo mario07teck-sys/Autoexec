@@ -14,9 +14,10 @@ namespace Autoexec.Core;
 static class Preparation
 {
     /// <summary>Edition : celle que l'installation prendra sans demander (Core, Professional, Education), ou vide pour qu'elle demande.
-    /// Genre : « windows », « linux » (Image est un .iso, copié tel quel) ou « neuf » (clé vidée, sans Image).</summary>
+    /// Genre : « windows », « linux » (Image est un .iso, copié tel quel), « raspberry » (Image est un .img.xz, déplié sur la
+    /// carte ; TailleImage et EmpreinteImage sont celles de l'image dépliée) ou « neuf » (clé vidée, sans Image).</summary>
     public record Travail(int Disque, string Chemin, long Taille, string Image, string Edition, string Reglages, bool ReglagesPE, string[] Pilotes, string[] Paquets,
-        string Dossier, bool Anglais, string Genre = "windows");
+        string Dossier, bool Anglais, string Genre = "windows", long TailleImage = 0, string EmpreinteImage = null);
 
     class Annule : Exception { }
 
@@ -68,7 +69,7 @@ static class Preparation
 
     static void Faire(Travail t)
     {
-        if (t.Genre == "linux") { CopieExacte(t); return; }
+        if (t.Genre is "linux" or "raspberry") { CopieExacte(t); return; }
         if (t.Genre == "neuf")
         {
             Dire("cle", 0);
@@ -168,7 +169,7 @@ static class Preparation
         // place utile sur la clé : sa partition (32 Go au plus), moins de quoi loger les tables FAT32 et les fins de blocs
         const long Marge = 96L << 20;
         if (total > Math.Min(t.Taille, 32000L << 20) - Marge)
-            throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((total + Marge) / 1e9)));
+            throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((total + Marge) / 1073741824.0)));
         Dire("finitions", 100);
 
         // 3. La clé n'est effacée qu'ici, juste après un dernier contrôle : même numéro, même matériel, même taille.
@@ -379,9 +380,10 @@ static class Preparation
     {
         // ouvert avant d'effacer : un fichier devenu illisible ne doit rien coûter à la clé
         using var image = File.OpenHandle(t.Image);
-        long taille = RandomAccess.GetLength(image);
+        bool deplier = t.Genre == "raspberry";
+        long taille = deplier ? t.TailleImage : RandomAccess.GetLength(image);
         if (taille + Bloc > t.Taille)
-            throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((taille + Bloc) / 1e9)));
+            throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((taille + Bloc) / 1073741824.0)));
         Dire("cle", 0);
         SiAnnule();
         // clé vidée de toutes ses partitions : Windows n'a alors plus aucun volume à protéger contre l'écriture directe
@@ -392,7 +394,12 @@ static class Preparation
         {
             using var cle = CreateFile($@"\\.\PhysicalDrive{t.Disque}", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
             if (cle.IsInvalid) throw new IOException($"ouverture de la clé refusée (erreur Windows {Marshal.GetLastWin32Error()})");
-            Copier(image, cle, taille);
+            if (deplier)
+            {
+                using var deplie = new Xz(new FileStream(t.Image, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20));
+                CopierFlux(deplie, cle, taille, t.EmpreinteImage);
+            }
+            else Copier(image, cle, taille);
             // La clé est éjectée, comme le fait Etcher. Tant qu'elle reste lisible, Windows la relit au moindre événement de
             // disque : il réécrit alors un secteur de sa table (vu le 22/11/2026 : Fedora refuse ensuite son propre contrôle
             // au démarrage), lui donne une lettre et propose de la formater.
@@ -402,12 +409,94 @@ static class Preparation
             else Journal.Ecrire("Clé éjectée");
 #endif
         }
+        catch (InvalidDataException ex)
+        {
+            // le fichier téléchargé avait pourtant la bonne empreinte : réessayer donnerait la même chose, on ne le propose pas
+            Journal.Ecrire("Image illisible : " + ex.Message);
+            throw new InvalidOperationException(Textes.T("Cette image n'a pas pu être lue. La carte a été vidée."));
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Journal.Ecrire("Copie exacte interrompue : " + ex.Message);
             throw new InvalidOperationException(Textes.T("La clé ne répond plus. Rebranche-la et recommence."));
         }
         Dire("fin", 100);
+    }
+
+    /// <summary>Raspberry Pi : l'image arrive dépliée au fil de l'eau, on ne peut pas y revenir. Elle est copiée sur la carte
+    /// pendant que son empreinte est calculée, puis la carte est relue et son empreinte calculée à son tour : les deux
+    /// doivent être celle que Raspberry publie pour l'image dépliée. Le premier bloc part en dernier, comme pour Linux.</summary>
+    public static void CopierFlux(Stream image, SafeFileHandle cle, long taille, string empreinte)
+    {
+        byte[] premier = new byte[Bloc], tampon = new byte[Bloc];
+        byte[][] tampons = [tampon, new byte[Bloc]];
+        Action<string> noter = _dossier == null ? _ => { } : Journal.Ecrire;
+        int Remplir(byte[] vers)
+        {
+            int n = 0, lu;
+            while (n < Bloc && (lu = image.Read(vers, n, Bloc - n)) > 0) n += lu;
+            Array.Clear(vers, n, Bloc - n);
+            return n;
+        }
+        static string Hexa(System.Security.Cryptography.IncrementalHash sha) => Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+        static int Secteurs(int n) => (n + 4095) / 4096 * 4096; // un disque ne s'écrit et ne se relit que par secteurs entiers
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var chrono = Stopwatch.StartNew();
+        int debut = Remplir(premier);
+        sha.AppendData(premier, 0, debut);
+        long fait = debut;
+        // pendant qu'un bloc part sur la carte, le suivant est déjà déplié : les deux ne s'attendent pas l'un l'autre
+        var lecture = Task.Run(() => Remplir(tampons[0]));
+        try
+        {
+            for (long position = Bloc, i = 0; ; position += Bloc, i++)
+            {
+                int n = lecture.GetAwaiter().GetResult();
+                if (n == 0) break;
+                byte[] bloc = tampons[i % 2], autre = tampons[(i + 1) % 2];
+                lecture = Task.Run(() => Remplir(autre));
+                fait += n;
+                if (fait > taille) break; // plus long que l'image annoncée : refusé juste après
+                sha.AppendData(bloc, 0, n);
+                RandomAccess.Write(cle, bloc.AsSpan(0, Secteurs(n)), position);
+                Dire("copie", Math.Min(100, 100.0 * fait / taille));
+                SiAnnule();
+            }
+        }
+        finally { try { lecture.Wait(); } catch { } } // aucune lecture ne doit survivre à la fermeture du fichier
+        // rien de tout cela n'est utilisable tant que le premier bloc manque : une image fausse ne donnera pas de carte
+        if (fait != taille || Hexa(sha) != empreinte)
+        {
+            noter($"Image dépliée inattendue : {fait} octets pour {taille} attendus, ou empreinte différente");
+            throw new InvalidDataException("image dépliée différente de celle publiée");
+        }
+        noter($"copie : {taille - Bloc} octets en {chrono.Elapsed.TotalSeconds:0} s");
+        if (!FlushFileBuffers(cle)) noter($"Vidage de la clé non confirmé (erreur Windows {Marshal.GetLastWin32Error()}) : la relecture tranchera");
+
+        chrono.Restart();
+        sha.AppendData(premier, 0, debut);
+        for (long position = Bloc; position < taille; position += Bloc)
+        {
+            int n = (int)Math.Min(Bloc, taille - position), lu = 0, r;
+            while (lu < Secteurs(n) && (r = RandomAccess.Read(cle, tampon.AsSpan(lu, Secteurs(n) - lu), position + lu)) > 0) lu += r;
+            if (lu < n) throw new IOException("relecture incomplète");
+            sha.AppendData(tampon, 0, n);
+            Dire("verif", Math.Min(100, 100.0 * (position + n) / taille));
+            SiAnnule();
+        }
+        bool pareil = Hexa(sha) == empreinte;
+        if (pareil)
+        {
+            RandomAccess.Write(cle, premier.AsSpan(0, Secteurs(debut)), 0);
+            FlushFileBuffers(cle);
+            int lu = 0, r;
+            while (lu < Secteurs(debut) && (r = RandomAccess.Read(cle, tampon.AsSpan(lu, Secteurs(debut) - lu), lu)) > 0) lu += r;
+            pareil = lu >= debut && premier.AsSpan(0, debut).SequenceEqual(tampon.AsSpan(0, debut));
+        }
+        noter($"verif : {taille - Bloc} octets en {chrono.Elapsed.TotalSeconds:0} s");
+        if (pareil) return;
+        noter("Vérification : la carte ne rend pas l'image qu'on y a écrite");
+        throw new InvalidOperationException(Textes.T("La clé ne garde pas ce qu'on y écrit. Essaie une autre clé."));
     }
 
     /// <summary>Copie l'image sur la clé, puis relit la clé et la compare à l'image, bloc par bloc.
