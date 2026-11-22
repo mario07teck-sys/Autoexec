@@ -96,6 +96,91 @@ static class Autotest
             return $"{octets.Length} octets, " + (repris ? "seconde moitié seule téléchargée" : "serveur sans reprise, fichier repris de zéro") + ", fichier abîmé refusé";
         });
 
+        foreach (var nom in Linux.Noms)
+            foreach (bool legere in new[] { false, true })
+                await Essai($"{nom}{(legere ? " (version légère)" : "")}, sur son site", async () =>
+                {
+                    var img = await Linux.Chercher(nom, legere, default);
+                    Exiger(img.Taille > 1_500_000_000 && Regex.IsMatch(img.Empreinte, "^[0-9a-f]{64}$") && Regex.IsMatch(img.Nom, @"^[\w.-]+\.iso$"), "fiche inattendue : " + img.Nom);
+                    // deux morceaux lus à distance : la reprise marche, c'est bien un disque optique (« CD001 ») et il porte
+                    // aussi une table de partitions (55 AA), sans laquelle une copie exacte ne démarrerait pas sur une clé
+                    var debut = await Task.Run(() => Portion(img.Url, 0, 512));
+                    var iso = await Task.Run(() => Portion(img.Url, 32768, 6));
+                    Exiger(debut[510] == 0x55 && debut[511] == 0xAA, "pas de table de partitions");
+                    Exiger(Encoding.ASCII.GetString(iso, 1, 5) == "CD001", "ce n'est pas une image de disque");
+                    return $"{img.Nom}, {img.Taille / 1e9:0.00} Go, {new Uri(img.Url).Host}";
+                });
+
+        await Essai("Numéros de version Linux", () => Task.Run(() =>
+        {
+            Exiger(Linux.Numero("linuxmint-23-cinnamon-64bit.iso") == new Version(23, 0), "version sans point");
+            Exiger(Linux.Numero("ubuntu-24.04.5.1-desktop-amd64.iso") > Linux.Numero("ubuntu-24.04.4-desktop-amd64.iso"), "version à quatre nombres");
+            Exiger(Linux.Numero("debian-live-13.10.0-amd64-gnome.iso") > Linux.Numero("debian-live-13.8.0-amd64-gnome.iso"), "13.10 après 13.8");
+            return "sans point, à quatre nombres, 13.10 après 13.8";
+        }));
+
+        await Essai("Copie exacte et relecture", () => Task.Run(() =>
+        {
+            // une fausse image de deux blocs et demi, plus une fin qui ne tombe pas sur un secteur ; la « clé » est un fichier
+            string image = Path.Combine(Path.GetTempPath(), "autoexec-image.bin"), cle = Path.Combine(Path.GetTempPath(), "autoexec-cle.bin");
+            var octets = new byte[(80 << 20) + 1000];
+            new Random(7).NextBytes(octets);
+            File.WriteAllBytes(image, octets);
+            File.Delete(cle);
+            try
+            {
+                using (var i = File.OpenHandle(image))
+                using (var c = File.OpenHandle(cle, FileMode.Create, FileAccess.ReadWrite))
+                    Preparation.Copier(i, c, octets.Length);
+                var ecrit = File.ReadAllBytes(cle);
+                Exiger(ecrit.Length == (octets.Length + 4095) / 4096 * 4096, $"longueur {ecrit.Length}");
+                Exiger(ecrit.AsSpan(0, octets.Length).SequenceEqual(octets) && ecrit.AsSpan(octets.Length).IndexOfAnyExcept((byte)0) < 0, "la copie diffère de l'image");
+                // la relecture doit voir un seul bit de travers, dans le premier bloc (écrit à part) comme dans les suivants
+                foreach (int position in new[] { 10, 50 << 20 })
+                {
+                    octets[position] ^= 1;
+                    File.WriteAllBytes(image, octets);
+                    octets[position] ^= 1;
+                    bool refuse = false;
+                    try
+                    {
+                        using var i = File.OpenHandle(image);
+                        using var c = File.OpenHandle(cle);
+                        Preparation.Copier(i, c, octets.Length, ecrire: false);
+                    }
+                    catch (InvalidOperationException) { refuse = true; }
+                    Exiger(refuse, $"un bit de travers à l'octet {position} n'a pas été vu");
+                }
+                return $"{octets.Length} octets, identiques ; un bit de travers est vu";
+            }
+            finally { File.Delete(image); File.Delete(cle); }
+        }));
+
+        await Essai("Relecture d'un fichier copié", () => Task.Run(() =>
+        {
+            // la relecture d'une clé Windows : un fichier de deux lots et quelques, qui ne finit pas sur un secteur
+            string source = Path.Combine(Path.GetTempPath(), "autoexec-source.bin"), copie = Path.Combine(Path.GetTempPath(), "autoexec-copie.bin");
+            var octets = new byte[(9 << 20) + 777];
+            new Random(11).NextBytes(octets);
+            try
+            {
+                File.WriteAllBytes(source, octets);
+                File.WriteAllBytes(copie, octets);
+                long vus = 0;
+                Exiger(Preparation.Identiques(source, copie, n => vus += n) && vus == octets.Length, "une copie fidèle a été dite différente");
+                octets[^5] ^= 1;
+                File.WriteAllBytes(copie, octets);
+                Exiger(!Preparation.Identiques(source, copie, null), "un bit de travers en fin de fichier n'a pas été vu");
+                File.WriteAllBytes(copie, octets.AsSpan(0, octets.Length - 1).ToArray());
+                Exiger(!Preparation.Identiques(source, copie, null), "un fichier plus court n'a pas été vu");
+                File.WriteAllBytes(source, []);
+                File.WriteAllBytes(copie, []);
+                Exiger(Preparation.Identiques(source, copie, null), "deux fichiers vides ont été dits différents");
+                return $"{octets.Length} octets : fidèle, un bit de travers, plus court, vide";
+            }
+            finally { File.Delete(source); File.Delete(copie); }
+        }));
+
         await Essai("Fichier de réglages", () => Task.Run(() =>
         {
             Exiger(Reglages.Fabriquer(false, false, false) == null, "rien demandé doit donner rien");
@@ -118,6 +203,9 @@ static class Autotest
             Exiger(grosse.StartsWith("select disk 2\r\nclean\r\n") && grosse.Contains("create partition primary size=32000"), "grosse clé");
             Exiger(format.StartsWith("select disk 3\r\nselect partition 1\r\nformat fs=fat32 quick label=AUTOEXEC\r\n") && format.Contains("assign letter=F"), "format");
             Exiger(!format.Contains("clean") && Regex.Matches(grosse + format, "select disk").Count == 2, "un seul disque visé par script");
+            // clé remise à neuf : toute la clé, sans nom ni partition active
+            Exiger(!Preparation.ScriptEffacer(2, 0).Contains("size=")
+                && Preparation.ScriptFormater(2, 'G', "exFAT") == "select disk 2\r\nselect partition 1\r\nformat fs=exfat quick\r\nassign letter=G\r\nexit\r\n", "clé à neuf");
             Exiger(Preparation.Pourcentage("[===========       42.5%            ]") == 42.5 && Preparation.Pourcentage("Deployment Image Servicing") == null, "progression DISM");
             return "petite et grosse clé";
         }));
@@ -134,7 +222,7 @@ static class Autotest
             Exiger(Pilotes.Courants.Select(p => p.Nom).Distinct().Count() == Pilotes.Courants.Length, "deux paquets du même nom");
             foreach (var p in Pilotes.Courants)
             {
-                Exiger(Regex.IsMatch(p.Nom, @"^[a-z0-9-]+\.cab$") && Regex.IsMatch(p.Sha1, "^[0-9a-f]{40}$"), "fiche inattendue : " + p.Nom);
+                Exiger(Regex.IsMatch(p.Nom, @"^[a-z0-9-]+\.cab$") && Regex.IsMatch(p.Empreinte, "^[0-9a-f]{40}$"), "fiche inattendue : " + p.Nom);
                 Exiger(new Uri(p.Url).Host.EndsWith(".windowsupdate.com"), p.Nom + " pointe ailleurs que chez Microsoft");
                 // sans télécharger : le fichier existe toujours, à la taille notée
                 using var rep = await Catalogue.Http.SendAsync(new HttpRequestMessage(HttpMethod.Head, p.Url));
@@ -156,7 +244,7 @@ static class Autotest
 
     static string Decrire(ImageWindows img)
     {
-        if (img.Taille < 3_000_000_000 || !Regex.IsMatch(img.Sha1, "^[0-9a-f]{40}$") || !img.Nom.EndsWith(".esd"))
+        if (img.Taille < 3_000_000_000 || !Regex.IsMatch(img.Empreinte, "^[0-9a-f]{40}$") || !img.Nom.EndsWith(".esd"))
             throw new InvalidOperationException("fiche du catalogue inattendue");
         return $"{img.Nom}, {img.Taille / 1e9:0.00} Go, {new Uri(img.Url).Host}";
     }

@@ -9,7 +9,8 @@ if ($cle.BusType -ne 'USB' -or $cle.IsBoot -or $cle.IsSystem) { "ARRET : le disq
 if (Test-Path $Vhdx) { "ARRET : $Vhdx existe deja"; exit 1 }
 # on copie du debut de la cle a la fin de sa derniere partition, arrondi au bloc de 4 Mo
 $fin = (Get-Partition -DiskNumber $Disque | ForEach-Object { $_.Offset + $_.Size } | Measure-Object -Maximum).Maximum
-if ($Limite -gt 0 -and $Limite -lt $fin) { $fin = $Limite }
+# une cle Linux n'a pas de partitions que Windows sache toutes lire : -Limite donne alors la taille de son image
+if ($Limite -gt 0 -and (-not $fin -or $Limite -lt $fin)) { $fin = $Limite }
 $fin = [long]([math]::Ceiling($fin / 4MB) * 4MB)
 $taille = [long]([math]::Ceiling($fin / 1GB) * 1GB)
 Add-Type @'

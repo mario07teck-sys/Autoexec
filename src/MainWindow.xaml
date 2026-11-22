@@ -18,8 +18,14 @@
     </Grid.RowDefinitions>
 
     <!-- barre de titre -->
-    <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
-      <Viewbox Width="20" Height="20" Margin="0,0,10,0">
+    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+      <!-- une fois Windows ou Linux choisi, le logo laisse sa place à la flèche de retour : le nom de l'appli ne bouge pas -->
+      <Button x:Name="BoutonRetour" Style="{StaticResource CaptionBtn}" Click="Changer_Click" ToolTip="{l:T 'Revenir au choix'}"
+              AutomationProperties.Name="{l:T 'Revenir au choix'}" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True">
+        <Path Style="{StaticResource Icon}" Data="M14.5,6 L8.5,12 L14.5,18" Width="12" Height="12" StrokeThickness="1.5"
+              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+      </Button>
+      <Viewbox x:Name="Logo" Width="20" Height="20" Margin="16,0,10,0">
         <Canvas Width="512" Height="512">
           <Rectangle Canvas.Left="8" Canvas.Top="8" Width="496" Height="496" RadiusX="112" RadiusY="112" Fill="#1D1A2B" Stroke="#3B3555" StrokeThickness="16"/>
           <Path Data="M112,146 L246,256 L112,366" Stroke="#BDAEF5" StrokeThickness="72" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
@@ -45,8 +51,55 @@
 
     <Grid Grid.Row="1" Margin="24,10,24,24">
 
+      <!-- ===== Choix, au lancement : Windows, Linux, ou une clé à remettre à neuf ===== -->
+      <DockPanel x:Name="PageChoix">
+        <Button x:Name="ChoixNeuf" DockPanel.Dock="Bottom" Style="{StaticResource Btn}" Tag="neuf" Click="Choix_Click" Content="{l:T 'Remettre une clé à neuf'}"
+                ToolTip="{l:T 'Pour une clé que Windows montre vide ou minuscule.'}"/>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="{l:T 'Quelle clé veux-tu préparer ?'}" FontFamily="{StaticResource Display}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <Grid Margin="0,26,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="12"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="ChoixWindows" Style="{StaticResource Btn}" Padding="10,30,10,26" Tag="windows" Click="Choix_Click" AutomationProperties.Name="Windows">
+              <StackPanel>
+                <Viewbox Width="58" Height="58">
+                  <Canvas Width="64" Height="64">
+                    <Rectangle Canvas.Left="5" Canvas.Top="5" Width="25" Height="25" RadiusX="5" RadiusY="5" Fill="{StaticResource Accent}"/>
+                    <Rectangle Canvas.Left="34" Canvas.Top="5" Width="25" Height="25" RadiusX="5" RadiusY="5" Fill="{StaticResource Accent}"/>
+                    <Rectangle Canvas.Left="5" Canvas.Top="34" Width="25" Height="25" RadiusX="5" RadiusY="5" Fill="{StaticResource Accent}"/>
+                    <Rectangle Canvas.Left="34" Canvas.Top="34" Width="25" Height="25" RadiusX="5" RadiusY="5" Fill="{StaticResource Accent}"/>
+                  </Canvas>
+                </Viewbox>
+                <TextBlock Text="Windows" FontFamily="{StaticResource Display}" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,18,0,0"/>
+                <TextBlock Text="{l:T '11 ou 10'}" FontSize="12.5" Foreground="{StaticResource Text2}" HorizontalAlignment="Center" Margin="0,3,0,0"/>
+              </StackPanel>
+            </Button>
+            <Button x:Name="ChoixLinux" Grid.Column="2" Style="{StaticResource Btn}" Padding="10,30,10,26" Tag="linux" Click="Choix_Click" AutomationProperties.Name="Linux">
+              <StackPanel>
+                <Viewbox Width="58" Height="58">
+                  <Canvas Width="64" Height="64">
+                    <Ellipse Canvas.Left="14" Canvas.Top="54" Width="15" Height="7" Fill="{StaticResource Accent}"/>
+                    <Ellipse Canvas.Left="35" Canvas.Top="54" Width="15" Height="7" Fill="{StaticResource Accent}"/>
+                    <Path Fill="{StaticResource Ok}" Data="M32,4 C24,4 20,10 20,18 C20,25 13,31 11,42 C9,53 17,58 32,58 C47,58 55,53 53,42 C51,31 44,25 44,18 C44,10 40,4 32,4 Z"/>
+                    <Path Fill="#1A1922" Data="M32,27 C26,27 21,35 21,44 C21,51 25,54 32,54 C39,54 43,51 43,44 C43,35 38,27 32,27 Z"/>
+                    <Ellipse Canvas.Left="25" Canvas.Top="13" Width="5" Height="6" Fill="#1A1922"/>
+                    <Ellipse Canvas.Left="34" Canvas.Top="13" Width="5" Height="6" Fill="#1A1922"/>
+                    <Path Fill="{StaticResource Accent}" Data="M27.5,21 L36.5,21 L32,26.5 Z" StrokeLineJoin="Round" Stroke="{StaticResource Accent}" StrokeThickness="1.5"/>
+                  </Canvas>
+                </Viewbox>
+                <TextBlock Text="Linux" FontFamily="{StaticResource Display}" FontSize="19" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,18,0,0"/>
+                <TextBlock Text="Ubuntu, Mint, Debian, Fedora" FontSize="12.5" Foreground="{StaticResource Text2}" HorizontalAlignment="Center" Margin="0,3,0,0"/>
+              </StackPanel>
+            </Button>
+          </Grid>
+        </StackPanel>
+      </DockPanel>
+
       <!-- ===== Accueil ===== -->
-      <DockPanel x:Name="PageAccueil">
+      <DockPanel x:Name="PageAccueil" Visibility="Collapsed">
         <Button x:Name="BoutonPreparer" DockPanel.Dock="Bottom" Style="{StaticResource Primary}" Content="{l:T 'Préparer la clé'}"
                 Click="Preparer_Click" IsEnabled="False" Margin="0,14,0,0"/>
         <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
@@ -107,6 +160,30 @@
               </ListBox.ItemTemplate>
             </ListBox>
 
+            <TextBlock x:Name="NoteNeuf" Text="{l:T 'Elle redeviendra une clé ordinaire, vide.'}" FontSize="12.5" Foreground="{StaticResource Text2}"
+                       Margin="2,12,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+            <StackPanel x:Name="BlocLinux" Visibility="Collapsed">
+              <TextBlock Style="{StaticResource Section}" Text="Linux" Margin="2,18,0,8"/>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="8"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition/>
+                  <RowDefinition/>
+                </Grid.RowDefinitions>
+                <RadioButton x:Name="Ubuntu" Style="{StaticResource Chip}" GroupName="linux" Content="Ubuntu" IsChecked="True" Checked="Linux_Change"/>
+                <RadioButton x:Name="Mint" Grid.Column="2" Style="{StaticResource Chip}" GroupName="linux" Content="Linux Mint" Checked="Linux_Change"/>
+                <RadioButton x:Name="Debian" Grid.Row="1" Style="{StaticResource Chip}" GroupName="linux" Content="Debian" Margin="0,8,0,0" Checked="Linux_Change"/>
+                <RadioButton x:Name="Fedora" Grid.Row="1" Grid.Column="2" Style="{StaticResource Chip}" GroupName="linux" Content="Fedora" Margin="0,8,0,0" Checked="Linux_Change"/>
+              </Grid>
+              <TextBlock x:Name="NoteLinux" FontSize="12.5" Foreground="{StaticResource Text2}" Margin="2,8,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel x:Name="BlocWindows">
             <TextBlock Style="{StaticResource Section}" Text="Windows" Margin="2,18,0,8"/>
             <Grid>
               <Grid.ColumnDefinitions>
@@ -134,13 +211,20 @@
             </Grid>
             <TextBlock x:Name="NoteWin10" Text="{l:T 'Windows 10 ne reçoit plus de mises à jour de sécurité.'}" FontSize="12.5"
                        Foreground="{StaticResource Text2}" Margin="2,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+            </StackPanel>
 
-            <TextBlock Style="{StaticResource Section}" Text="{l:T 'Réglages'}" Margin="2,18,0,2"/>
-            <CheckBox x:Name="OptCompte" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Compte local, sans compte Microsoft'}"/>
-            <CheckBox x:Name="OptPilotes" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Pilotes Wi-Fi et Ethernet'}"/>
-            <CheckBox x:Name="OptQuestions" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Sans questions de confidentialité'}"/>
-            <CheckBox x:Name="OptTpm" Style="{StaticResource Switch}" Content="{l:T 'Accepter les PC sans TPM'}"/>
-            <CheckBox x:Name="OptGarder" Style="{StaticResource Switch}" Content="{l:T 'Garder le fichier Windows téléchargé'}"/>
+            <StackPanel x:Name="BlocReglages">
+              <TextBlock Style="{StaticResource Section}" Text="{l:T 'Réglages'}" Margin="2,18,0,2"/>
+              <StackPanel x:Name="ReglagesWindows">
+                <CheckBox x:Name="OptCompte" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Compte local, sans compte Microsoft'}"/>
+                <CheckBox x:Name="OptPilotes" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Pilotes Wi-Fi et Ethernet'}"/>
+                <CheckBox x:Name="OptQuestions" Style="{StaticResource Switch}" IsChecked="True" Content="{l:T 'Sans questions de confidentialité'}"/>
+                <CheckBox x:Name="OptTpm" Style="{StaticResource Switch}" Content="{l:T 'Accepter les PC sans TPM'}"/>
+              </StackPanel>
+              <CheckBox x:Name="OptLegere" Style="{StaticResource Switch}" Content="{l:T 'Version légère, pour un PC ancien'}"
+                        ToolTip="{l:T 'Le même système avec un bureau plus simple (Xfce), qui demande moins de mémoire.'}"/>
+              <CheckBox x:Name="OptGarder" Style="{StaticResource Switch}" Content="{l:T 'Garder le fichier téléchargé'}"/>
+            </StackPanel>
           </StackPanel>
         </ScrollViewer>
       </DockPanel>
@@ -214,8 +298,10 @@
             <Path Style="{StaticResource Icon}" Data="{StaticResource IcCheck}" Width="34" Height="34" Stroke="{StaticResource Ok}" StrokeThickness="2.6"/>
           </Grid>
           <TextBlock Text="{l:T 'La clé est prête'}" FontFamily="{StaticResource Display}" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,22,0,0"/>
-          <TextBlock Text="{l:T 'Redémarre le PC dessus pour installer Windows.'}" FontSize="14" Foreground="{StaticResource Text2}"
+          <TextBlock x:Name="TexteFin" FontSize="14" Foreground="{StaticResource Text2}"
                      HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0"/>
+          <TextBlock x:Name="NoteFin" FontSize="12.5" Foreground="{StaticResource Text3}" Visibility="Collapsed"
+                     HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="12,18,12,0"/>
         </StackPanel>
       </DockPanel>
     </Grid>

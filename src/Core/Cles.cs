@@ -12,8 +12,12 @@ record Cle(int Numero, string Nom, long Taille, string Chemin, bool Protegee)
 
 static class Cles
 {
-    // garde-fou de plus : une clé d'installation n'a pas besoin de moins de 7 Go, et au-delà de 300 Go ce n'est plus une clé
-    public const long Mini = 7_000_000_000, Maxi = 300_000_000_000;
+    // garde-fou de plus : en dessous de 1 Go ou au-delà de 300 Go, ce n'est pas une clé à préparer
+    public const long Mini = 1_000_000_000, Maxi = 300_000_000_000;
+
+    /// <summary>La plus petite clé que la fenêtre propose : Windows ne tient pas sur moins de 8 Go, les plus petites
+    /// distributions Linux tiennent sur 4 Go, et toute clé peut être remise à neuf.</summary>
+    public static long MiniPour(string genre) => genre == "windows" ? 7_000_000_000 : genre == "linux" ? 3_500_000_000 : Mini;
 
     const string Stockage = @"root\Microsoft\Windows\Storage";
 

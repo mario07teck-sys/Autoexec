@@ -42,16 +42,18 @@ public partial class MainWindow : Window
         catch (Exception ex) { Journal.Ecrire("Pilotes : " + ex.Message); return new List<Pilote>(); }
     });
     CancellationTokenSource _cts;
+    Cle _nommee; // la clé nommée dans la question « Effacer … ? »
     Action _surTick;
-    bool _enCours, _verification;
+    bool _enCours, _verification, _cleEffacee;
     long _fait, _total, _depart;
     string _erreurTravail;
     static bool _miseAJourCherchee; // une fois par lancement, pas à chaque changement de langue
+    static string _genre; // « windows », « linux » ou « neuf » : gardé quand la fenêtre se rouvre pour changer de langue
 
     public MainWindow()
     {
         InitializeComponent();
-        LectureAuto(false);
+        if (_genre != null) Choisir(_genre);
         Liste.ItemsSource = _cles;
         ListeEtapes.ItemsSource = _etapes;
         BoutonLangue.Content = Textes.Anglais ? "FR" : "EN";
@@ -137,6 +139,7 @@ public partial class MainWindow : Window
         List<Cle> trouvees;
         try { trouvees = await Task.Run(Cles.Lister); }
         catch (Exception ex) { Journal.Ecrire("Liste des clés : " + ex.Message); trouvees = new(); }
+        trouvees.RemoveAll(c => c.Taille < Cles.MiniPour(_genre));
         var choisie = (Liste.SelectedItem as Cle)?.Chemin;
         _cles.Clear();
         foreach (var c in trouvees) _cles.Add(c);
@@ -156,10 +159,47 @@ public partial class MainWindow : Window
         OptTpm.IsEnabled = !dix; // seul Windows 11 exige un TPM
     }
 
+    /// <summary>La distribution choisie : son nom pour le catalogue, et une phrase pour qui ne sait pas laquelle prendre.</summary>
+    (string Nom, string Note) Distribution =>
+        Mint.IsChecked == true ? ("Linux Mint", "Le plus proche de Windows : idéal pour débuter.")
+        : Debian.IsChecked == true ? ("Debian", "Sobre et très stable.")
+        : Fedora.IsChecked == true ? ("Fedora", "Les nouveautés en premier.")
+        : ("Ubuntu", "Le plus répandu : on trouve de l'aide partout.");
+
+    void Linux_Change(object sender, RoutedEventArgs e)
+    {
+        if (NoteLinux != null) NoteLinux.Text = Textes.T(Distribution.Note); // pas encore là quand la fenêtre se construit
+    }
+
+    void Choix_Click(object sender, RoutedEventArgs e) => Choisir((string)((FrameworkElement)sender).Tag);
+
+    void Choisir(string genre)
+    {
+        _genre = genre;
+        Visibility Si(bool vrai) => vrai ? Visibility.Visible : Visibility.Collapsed;
+        BlocWindows.Visibility = ReglagesWindows.Visibility = Si(genre == "windows");
+        BlocLinux.Visibility = OptLegere.Visibility = Si(genre == "linux");
+        BlocReglages.Visibility = Si(genre != "neuf");
+        NoteNeuf.Visibility = Si(genre == "neuf");
+        BoutonPreparer.Content = Textes.T(genre == "neuf" ? "Remettre la clé à neuf" : "Préparer la clé");
+        BoutonConfirmer.Content = Textes.T(genre == "neuf" ? "Effacer" : "Effacer et préparer");
+        Linux_Change(null, null);
+        Montrer(PageAccueil);
+        _ = Rafraichir(); // la plus petite clé proposée dépend de ce qu'on veut en faire
+    }
+
+    void Changer_Click(object sender, RoutedEventArgs e)
+    {
+        if (_enCours || Confirmation.Visibility == Visibility.Visible) return; // pas de retour en arrière sous une question ouverte
+        _genre = null;
+        Montrer(PageChoix);
+    }
+
     void Preparer_Click(object sender, RoutedEventArgs e)
     {
         if (Liste.SelectedItem is not Cle { Protegee: false } cle) return;
         TitreConfirmation.Text = Textes.T("Effacer « {0} » ({1}) ?", cle.Nom, cle.Go);
+        _nommee = cle;
         Confirmation.Visibility = Visibility.Visible;
         BoutonConfirmer.Focus();
     }
@@ -169,21 +209,39 @@ public partial class MainWindow : Window
     async void Confirmer_Click(object sender, RoutedEventArgs e)
     {
         Confirmation.Visibility = Visibility.Collapsed;
-        if (Liste.SelectedItem is Cle cle && !_enCours) await Travailler(cle);
+        // seule la clé nommée dans la question est effacée : si une autre a pris sa place entre-temps, on ne fait rien
+        if (Liste.SelectedItem is Cle cle && cle == _nommee && !_enCours) await Travailler(cle);
     }
 
     async Task Travailler(Cle cle)
     {
+        string genre = _genre, distribution = Distribution.Nom;
+        bool win = genre == "windows", linux = genre == "linux", legere = OptLegere.IsChecked == true;
         int windows = Win10.IsChecked == true ? 10 : 11;
-        bool compte = OptCompte.IsChecked == true, questions = OptQuestions.IsChecked == true, tpm = windows == 11 && OptTpm.IsChecked == true,
-             garder = OptGarder.IsChecked == true, pilotes = OptPilotes.IsChecked == true;
+        // les réglages de Windows ne valent que pour Windows
+        bool compte = win && OptCompte.IsChecked == true, questions = win && OptQuestions.IsChecked == true, tpm = win && windows == 11 && OptTpm.IsChecked == true,
+             garder = OptGarder.IsChecked == true, pilotes = win && OptPilotes.IsChecked == true;
         string langue = (string)Langue.SelectedValue, edition = (string)((ComboBoxItem)Edition.SelectedItem).Tag;
         _etapes.Clear();
-        // la clé n'est effacée qu'une fois Windows prêt sur le disque du PC : un échec avant ne lui coûte rien
-        foreach (var (code, texte) in new[] { ("telechargement", "Téléchargement"), ("windows", "Préparation de Windows"),
-                     ("finitions", "Pilotes et réglages"), ("cle", "Effacement de la clé"), ("copie", "Copie sur la clé") })
-            _etapes.Add(new Etape { Code = code, Texte = Textes.T(texte) });
-        TitreTravail.Text = Textes.T("Windows {0} sur {1}", windows, cle.Nom);
+        // Windows : la clé n'est effacée qu'une fois Windows prêt sur le disque du PC, un échec avant ne lui coûte rien.
+        // Linux : le fichier téléchargé est déjà l'image de la clé, il n'y a rien à préparer.
+        (string, string)[] etapes = win ? [("telechargement", "Téléchargement"), ("windows", "Préparation de Windows"),
+                ("finitions", "Pilotes et réglages"), ("cle", "Effacement de la clé"), ("copie", "Copie sur la clé"), ("verif", "Vérification de la clé")]
+            : linux ? [("telechargement", "Téléchargement"), ("cle", "Effacement de la clé"), ("copie", "Copie sur la clé"), ("verif", "Vérification de la clé")]
+            : [("cle", "Effacement de la clé")];
+        foreach (var (code, texte) in etapes) _etapes.Add(new Etape { Code = code, Texte = Textes.T(texte) });
+        TitreTravail.Text = win ? Textes.T("Windows {0} sur {1}", windows, cle.Nom) : linux ? Textes.T("{0} sur {1}", distribution, cle.Nom) : cle.Nom;
+        TexteFin.Text = win ? Textes.T("Redémarre le PC dessus pour installer Windows.")
+            : linux ? Textes.T("Retire-la, puis démarre un PC dessus pour essayer ou installer {0}.", distribution) : Textes.T("Elle est vide, comme une clé neuve.");
+        // Windows ne sait pas lire une clé Linux, et il en réécrit un secteur dès qu'il la revoit : Fedora, qui se contrôle
+        // elle-même au démarrage, s'en aperçoit (vu le 22/11/2026)
+        NoteFin.Text = distribution == "Fedora"
+            ? Textes.T("Évite de la rebrancher sous Windows : il la modifie, et Fedora la dirait abîmée. Si cela arrive, choisis « Start Fedora » au démarrage.")
+            : Textes.T("Sous Windows, cette clé ne se lit pas. S'il propose de la formater, réponds Annuler.")
+              // vu le 22/11/2026 sur une machine ancienne (BIOS), avec la clé comme avec le DVD officiel : l'entrée par
+              // défaut de Mint n'affiche pas son bureau, la deuxième ligne du menu si
+              + (distribution == "Linux Mint" ? " " + Textes.T("Si l'écran reste noir au démarrage, choisis « compatibility mode ».") : "");
+        NoteFin.Visibility = linux ? Visibility.Visible : Visibility.Collapsed;
         MessageErreur.Visibility = Visibility.Collapsed;
         BoutonAnnuler.Content = Textes.T("Annuler");
         BoutonAnnuler.IsEnabled = true;
@@ -194,49 +252,57 @@ public partial class MainWindow : Window
         _enCours = true;
         _cts = new();
         _erreurTravail = null;
+        _cleEffacee = false;
         SetThreadExecutionState(0x80000001); // pas de mise en veille pendant le travail
         string fichier = null;
         bool reussi = false;
         try
         {
             var ct = _cts.Token;
-            Avancer("telechargement", 0);
-            var img = await Catalogue.Chercher(windows, langue, ct);
-            fichier = Path.Combine(Cache, img.Nom);
-
-            // place nécessaire : le fichier Windows (s'il n'est pas déjà là), puis sa version dépliée avant l'envoi sur la clé.
-            // Un Windows à découper passe deux fois sur le disque (mesuré : 13 Go pour un fichier de 4,7 Go).
-            Directory.CreateDirectory(Cache);
-            long deja = new[] { fichier, fichier + ".part" }.Where(File.Exists).Sum(f => new FileInfo(f).Length);
-            // les pilotes des cartes courantes : leurs .cab, puis leur contenu déplié (mesuré : 290 Mo pour 86)
-            long lot = pilotes ? Pilotes.Courants.Sum(p => p.Taille) : 0;
-            long besoin = img.Taille - deja + img.Taille * 3 / (img.Taille > Preparation.MaxFat32 ? 1 : 2) + lot * 5, libre = new DriveInfo(Path.GetPathRoot(Cache)).AvailableFreeSpace;
-            if (libre < besoin)
-                throw new InvalidOperationException(Textes.T("Il manque {0} Go de place sur le disque {1}", Math.Ceiling((besoin - libre) / 1e9), Path.GetPathRoot(Cache)));
-
-            // une seule jauge pour Windows puis les pilotes : elle ne repart pas de zéro entre les deux
-            _fait = 0; _total = img.Taille + lot; _depart = -1; _verification = false;
-            _surTick = SuivreTelechargement;
-            _suivi.Start();
-            await Telechargement.Recuperer(img, fichier,
-                (f, _) => { _verification = false; Interlocked.Exchange(ref _fait, f); },
-                (f, _) => { _verification = true; Interlocked.Exchange(ref _fait, f); }, ct);
             var paquets = new List<string>();
-            long avant = img.Taille;
-            foreach (var paquet in pilotes ? Pilotes.Courants : [])
+            if (genre != "neuf") // une clé remise à neuf n'a rien à télécharger
             {
-                var dest = Path.Combine(DossierPilotes, paquet.Nom);
-                long debut = avant;
-                try
+                Avancer("telechargement", 0);
+                var img = linux ? await Linux.Chercher(distribution, legere, ct) : await Catalogue.Chercher(windows, langue, ct);
+                // Linux : la taille du fichier est celle qu'il prendra sur la clé. Trop petite, autant le dire avant de télécharger.
+                if (linux && img.Taille + Preparation.Bloc > cle.Taille)
+                    throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((img.Taille + Preparation.Bloc) / 1e9)));
+                fichier = Path.Combine(Cache, img.Nom);
+
+                // place nécessaire : le fichier (s'il n'est pas déjà là), puis, pour Windows, sa version dépliée avant l'envoi
+                // sur la clé. Un Windows à découper passe deux fois sur le disque (mesuré : 13 Go pour un fichier de 4,7 Go).
+                Directory.CreateDirectory(Cache);
+                long deja = new[] { fichier, fichier + ".part" }.Where(File.Exists).Sum(f => new FileInfo(f).Length);
+                // les pilotes des cartes courantes : leurs .cab, puis leur contenu déplié (mesuré : 290 Mo pour 86)
+                long lot = pilotes ? Pilotes.Courants.Sum(p => p.Taille) : 0;
+                // (3,5 fois depuis que le .wim à découper est compressé vite : il sort à 6,5 Go au lieu de 6,0)
+                long besoin = img.Taille - deja + (win ? img.Taille * (img.Taille > Preparation.MaxFat32 ? 7 : 3) / 2 : 0) + lot * 5, libre = new DriveInfo(Path.GetPathRoot(Cache)).AvailableFreeSpace;
+                if (libre < besoin)
+                    throw new InvalidOperationException(Textes.T("Il manque {0} Go de place sur le disque {1}", Math.Ceiling((besoin - libre) / 1e9), Path.GetPathRoot(Cache)));
+
+                // une seule jauge pour Windows puis les pilotes : elle ne repart pas de zéro entre les deux
+                _fait = 0; _total = img.Taille + lot; _depart = -1; _verification = false;
+                _surTick = SuivreTelechargement;
+                _suivi.Start();
+                await Telechargement.Recuperer(img, fichier,
+                    (f, _) => { _verification = false; Interlocked.Exchange(ref _fait, f); },
+                    (f, _) => { _verification = true; Interlocked.Exchange(ref _fait, f); }, ct);
+                long avant = img.Taille;
+                foreach (var paquet in pilotes ? Pilotes.Courants : [])
                 {
-                    await Telechargement.Recuperer(paquet, dest, (f, _) => { _verification = false; Interlocked.Exchange(ref _fait, debut + f); }, null, ct);
-                    paquets.Add(dest);
+                    var dest = Path.Combine(DossierPilotes, paquet.Nom);
+                    long debut = avant;
+                    try
+                    {
+                        await Telechargement.Recuperer(paquet, dest, (f, _) => { _verification = false; Interlocked.Exchange(ref _fait, debut + f); }, null, ct);
+                        paquets.Add(dest);
+                    }
+                    // un pilote que Microsoft a retiré ne doit pas empêcher de faire la clé : les autres restent bons
+                    catch (HttpRequestException ex) when (ex.StatusCode != null) { Journal.Ecrire($"Pilote {paquet.Nom} introuvable chez Microsoft (code {(int)ex.StatusCode})"); }
+                    avant += paquet.Taille;
                 }
-                // un pilote que Microsoft a retiré ne doit pas empêcher de faire la clé : les autres restent bons
-                catch (HttpRequestException ex) when (ex.StatusCode != null) { Journal.Ecrire($"Pilote {paquet.Nom} introuvable chez Microsoft (code {(int)ex.StatusCode})"); }
-                avant += paquet.Taille;
+                _suivi.Stop();
             }
-            _suivi.Stop();
 
             Directory.CreateDirectory(DossierTravail);
             foreach (var f in new[] { Preparation.FichierEtat, Preparation.FichierAnnuler }) File.Delete(Path.Combine(DossierTravail, f));
@@ -244,12 +310,11 @@ public partial class MainWindow : Window
             if (Reglages.Fabriquer(compte, questions, tpm) is { } doc) doc.Save(reglages = Path.Combine(DossierTravail, "reglages.xml"));
             // la liste des pilotes se remplit en arrière-plan à l'ouverture : on l'attend, sinon un clic rapide les oublierait
             var travail = new Preparation.Travail(cle.Numero, cle.Chemin, cle.Taille, fichier, edition, reglages, tpm,
-                pilotes ? (await _recherchePilotes).Select(p => p.Inf).ToArray() : [], paquets.ToArray(), DossierTravail, Textes.Anglais);
+                pilotes ? (await _recherchePilotes).Select(p => p.Inf).ToArray() : [], paquets.ToArray(), DossierTravail, Textes.Anglais, genre);
             var fichierTravail = Path.Combine(DossierTravail, "travail.json");
             File.WriteAllText(fichierTravail, JsonSerializer.Serialize(travail));
 
-            Avancer("windows", 0, Textes.T("Windows demande ton autorisation."));
-            LectureAuto(true);
+            Avancer(win ? "windows" : "cle", 0, Textes.T("Windows demande ton autorisation."));
             Process p;
             try
             {
@@ -282,12 +347,16 @@ public partial class MainWindow : Window
             reussi = true;
             Montrer(PageFin);
         }
-        catch (OperationCanceledException) { Montrer(PageAccueil); }
+        // arrêt demandé avant que la clé soit entamée : comme si de rien n'était
+        catch (OperationCanceledException) when (!_cleEffacee) { Montrer(PageAccueil); }
         catch (Exception ex)
         {
-            Journal.Ecrire("Échec : " + ex);
+            // arrêt demandé après le début de l'effacement : la clé n'est plus utilisable telle quelle, il faut le dire
+            bool arret = ex is OperationCanceledException;
+            Journal.Ecrire(arret ? "Arrêt demandé alors que la clé était déjà effacée" : "Échec : " + ex);
             if (_etapes.FirstOrDefault(e => e.Etat == "encours") is { } active) { active.Etat = "erreur"; active.Droite = ""; }
-            MessageErreur.Text = ex is InvalidOperationException or InvalidDataException or TimeoutException
+            MessageErreur.Text = arret ? Textes.T("Arrêté. La clé a déjà été effacée : il faudra la refaire.")
+                : ex is InvalidOperationException or InvalidDataException or TimeoutException
                 ? ex.Message : Textes.T("Ça n'a pas marché. Vérifie la connexion Internet et réessaie.");
             MessageErreur.Visibility = Visibility.Visible;
             BoutonAnnuler.Content = Textes.T("Retour");
@@ -296,7 +365,6 @@ public partial class MainWindow : Window
         finally
         {
             _suivi.Stop();
-            LectureAuto(false);
             _enCours = false;
             BoutonAnnuler.IsEnabled = true;
             SetThreadExecutionState(0x80000000);
@@ -308,10 +376,11 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Pendant le travail, Windows ne doit rien ouvrir quand la clé réapparaît (Explorateur, « que faire de ce disque ? ») :
-    /// la lecture automatique de l'utilisateur est coupée, puis remise comme elle était (Rufus fait de même). L'état d'origine
-    /// est gardé à part : si l'appli est tuée en plein travail, il est remis à son prochain lancement.</summary>
-    static void LectureAuto(bool couper)
+    /// <summary>Tant que l'appli est ouverte, Windows ne doit rien ouvrir quand une clé apparaît (Explorateur, « que faire de ce
+    /// disque ? », « Formater le disque ? ») : la lecture automatique de l'utilisateur est coupée au lancement, puis remise
+    /// comme elle était à la fermeture (Rufus fait de même). L'état d'origine est gardé à part : si l'appli est tuée, il est
+    /// remis à la fermeture de son prochain lancement.</summary>
+    internal static void LectureAuto(bool couper)
     {
         try
         {
@@ -359,7 +428,7 @@ public partial class MainWindow : Window
         catch (IOException) { return; } // pas encore écrit
         if (derniere == null) return;
         var m = derniere.Split('|');
-        if (m[0] == "erreur") { if (m[2] != "annule") _erreurTravail = m[2]; }
+        if (m[0] == "erreur") { if (m[2] == "annule-efface") _cleEffacee = true; else if (m[2] != "annule") _erreurTravail = m[2]; }
         else if (m[0] == "fin") foreach (var e in _etapes) { e.Etat = "fait"; e.Droite = ""; }
         else Avancer(m[0], double.Parse(m[1], CultureInfo.InvariantCulture));
     }
@@ -388,8 +457,11 @@ public partial class MainWindow : Window
 
     void Montrer(FrameworkElement page)
     {
-        foreach (var p in new FrameworkElement[] { PageAccueil, PageTravail, PageFin })
+        foreach (var p in new FrameworkElement[] { PageChoix, PageAccueil, PageTravail, PageFin })
             p.Visibility = p == page ? Visibility.Visible : Visibility.Collapsed;
+        // la flèche de retour au choix prend la place du logo, sur la seule page où l'on peut encore changer d'avis
+        BoutonRetour.Visibility = page == PageAccueil ? Visibility.Visible : Visibility.Collapsed;
+        Logo.Visibility = page == PageAccueil ? Visibility.Collapsed : Visibility.Visible;
         page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)));
     }
 

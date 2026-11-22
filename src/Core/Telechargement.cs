@@ -7,12 +7,12 @@ namespace Autoexec.Core;
 
 static class Telechargement
 {
-    /// <summary>Télécharge vers dest en reprenant dest.part après une coupure, puis vérifie la taille et l'empreinte SHA-1.</summary>
+    /// <summary>Télécharge vers dest en reprenant dest.part après une coupure, puis vérifie la taille et l'empreinte.</summary>
     /// <returns>vrai si le serveur a bien repris un fichier commencé au lieu de tout renvoyer.</returns>
     public static async Task<bool> Recuperer(ImageWindows img, string dest, Action<long, long> avance, Action<long, long> verifie, CancellationToken ct)
     {
         // déjà là (gardé d'une fois précédente) et intact : rien à télécharger
-        if (File.Exists(dest) && new FileInfo(dest).Length == img.Taille && await Sha1(dest, verifie, ct) == img.Sha1) return false;
+        if (File.Exists(dest) && new FileInfo(dest).Length == img.Taille && await Empreinte(dest, img.Empreinte.Length, verifie, ct) == img.Empreinte) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(dest));
         var part = dest + ".part";
         bool repris = false;
@@ -64,7 +64,7 @@ static class Telechargement
                 await Task.Delay(3000, ct);
             }
         }
-        if (new FileInfo(part).Length != img.Taille || await Sha1(part, verifie, ct) != img.Sha1)
+        if (new FileInfo(part).Length != img.Taille || await Empreinte(part, img.Empreinte.Length, verifie, ct) != img.Empreinte)
         {
             File.Delete(part);
             throw new InvalidDataException(Textes.T("Le fichier téléchargé est abîmé. Réessaie."));
@@ -82,9 +82,10 @@ static class Telechargement
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException("connexion figée"); }
     }
 
-    public static async Task<string> Sha1(string fichier, Action<long, long> avance, CancellationToken ct)
+    /// <summary>SHA-256 quand l'empreinte attendue fait 64 caractères, SHA-1 sinon.</summary>
+    public static async Task<string> Empreinte(string fichier, int longueur, Action<long, long> avance, CancellationToken ct)
     {
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        using var sha = IncrementalHash.CreateHash(longueur == 64 ? HashAlgorithmName.SHA256 : HashAlgorithmName.SHA1);
         await using var f = new FileStream(fichier, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, true);
         var buf = new byte[1 << 20];
         long lu = 0;

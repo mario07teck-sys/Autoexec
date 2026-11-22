@@ -5,8 +5,9 @@ using System.Xml.Linq;
 
 namespace Autoexec.Core;
 
-/// <summary>Le fichier Windows à télécharger, tel que le catalogue de Microsoft le décrit.</summary>
-record ImageWindows(string Url, long Taille, string Sha1, string Nom);
+/// <summary>Un fichier à télécharger, tel que son éditeur le décrit. Empreinte : SHA-1 chez Microsoft (40 caractères),
+/// SHA-256 pour Linux (64).</summary>
+record ImageWindows(string Url, long Taille, string Empreinte, string Nom);
 
 /// <summary>Catalogue public de l'outil de création de média de Microsoft (products.cab).</summary>
 static class Catalogue

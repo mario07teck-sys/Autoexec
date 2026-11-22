@@ -1,15 +1,40 @@
 # Autoexec
 
-Prépare toute seule une clé USB d'installation de Windows 10 ou 11 : on branche la clé, on choisit Windows, on clique sur « Préparer la clé ».
+Prépare toute seule une clé USB d'installation de Windows 10 ou 11, ou de Linux (Ubuntu, Linux Mint, Debian, Fedora) : on branche la clé, on choisit, on clique sur « Préparer la clé ».
 
 Un seul fichier, `Autoexec.exe`, sans installation : on le lance, c'est tout. En français ou en anglais (bouton `EN` / `FR` en haut de la fenêtre). L'appli se met à jour toute seule au lancement.
 
 ## Ce que fait l'appli
 
+Au lancement, on choisit : **Windows**, **Linux**, ou **remettre une clé à neuf**.
+
+### Windows
+
 1. **Télécharge Windows chez Microsoft** : le fichier `.esd` du catalogue public de l'outil de création de média (`products.cab`), le même que l'outil de Microsoft, dans la langue choisie (38 langues). Reprise après coupure, vérification de la taille et de l'empreinte SHA-1.
-2. **Prépare Windows** sur le disque du PC avec DISM (livré avec Windows), après confirmation puis demande d'autorisation de Windows : arborescence de la clé, `boot.wim`, puis `install.esd`, ou `install.swm` et `install2.swm` quand le fichier dépasse 4 Go (le cas de Windows 11). Les **réglages et les pilotes** y sont ajoutés. Tant que tout cela n'a pas réussi, la clé n'est pas touchée.
-3. **Efface la clé** : table MBR, une partition FAT32 nommée `AUTOEXEC`, limitée à 32 Go sur les grosses clés.
-4. **Copie le tout sur la clé**. Pendant le travail, la lecture automatique de Windows est coupée pour que rien ne s'ouvre, puis remise comme elle était.
+2. **Prépare Windows** sur le disque du PC avec DISM (livré avec Windows), après confirmation puis demande d'autorisation de Windows : arborescence de la clé, `boot.wim`, puis `install.esd`, ou `install.swm` et `install2.swm` quand le fichier dépasse 4 Go (le cas de Windows 11). Sur une clé de 16 Go ou plus, ces `.swm` sont compressés vite plutôt qu'au maximum : 4 minutes de moins, 0,5 Go de plus sur la clé (une clé de 8 Go garde la compression maximale, faute de place). Les **réglages et les pilotes** y sont ajoutés. Tant que tout cela n'a pas réussi, la clé n'est pas touchée.
+3. **Efface la clé** : table MBR, une partition FAT32 nommée `AUTOEXEC`, limitée à 32 Go sur les grosses clés. L'effacement passe par le service de stockage de Windows (une dizaine de secondes) ; si Windows refuse, `diskpart` prend le relais (une minute).
+4. **Copie le tout sur la clé**.
+5. **Relit la clé**, fichier par fichier, sans passer par la mémoire de Windows, et la compare à ce qui vient d'être copié : une clé qui ne garde pas ce qu'on y écrit (clé usée, fausse capacité) n'est pas dite « prête ».
+
+Tant que l'appli est ouverte, la lecture automatique de Windows est coupée pour que rien ne s'ouvre quand une clé apparaît (ni l'Explorateur, ni « Formater le disque ? » devant une clé Linux), puis remise comme elle était à la fermeture.
+
+### Linux
+
+1. **Trouve la dernière version** sur le site de la distribution, avec sa taille et son empreinte SHA-256. Rien n'est figé dans l'appli :
+   - Ubuntu : la version « longue durée » en cours (`changelogs.ubuntu.com/meta-release-lts`), puis `releases.ubuntu.com/<version>/SHA256SUMS` ;
+   - Linux Mint : le dossier le plus récent de `mirrors.kernel.org/linuxmint/stable/`, puis son `sha256sum.txt` (Mint n'a pas de serveur central, seulement des miroirs) ;
+   - Debian : `cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS` (image « live » avec bureau GNOME) ;
+   - Fedora : `fedoraproject.org/releases.json` (Workstation ; les versions bêta sont écartées).
+2. **Télécharge le fichier `.iso`**, avec reprise après coupure, et vérifie son empreinte.
+3. **Vide la clé**, puis y **copie le fichier tel quel**, secteur par secteur : c'est ce que demandent ces quatre distributions, dont le fichier est déjà l'image d'une clé qui démarre, sur les PC récents (UEFI, Secure Boot) comme sur les anciens (BIOS). Le premier bloc, qui porte la table des partitions, est écrit en dernier : tant qu'il manque, Windows ne voit rien sur la clé.
+4. **Relit toute la clé** et la compare au fichier.
+5. **Éjecte la clé**. Windows ne sait pas lire une clé Linux : s'il la relit, il réécrit un secteur de sa table, lui donne une lettre et propose de la formater. Fedora, qui se contrôle elle-même au démarrage, refuse alors la clé (il faut choisir « Start Fedora » au lieu de l'entrée par défaut).
+
+« Version légère, pour un PC ancien » prend le même système avec le bureau Xfce, qui demande moins de mémoire : Xubuntu, Linux Mint Xfce, Debian Xfce, Fedora Xfce.
+
+### Remettre une clé à neuf
+
+Pour une clé que Windows montre vide ou minuscule (une ancienne clé Linux, par exemple) : toute la clé redevient une seule partition, en FAT32 jusqu'à 32 Go et en exFAT au-delà.
 
 Pendant le téléchargement et la préparation, la fenêtre ne se ferme pas : pour arrêter, il y a « Annuler ».
 
@@ -23,7 +48,7 @@ Pendant le téléchargement et la préparation, la fenêtre ne se ferme pas : po
 | Sans questions de confidentialité | `ProtectYourPC = 3`, `HideEULAPage` |
 | Accepter les PC sans TPM (Windows 11) | clés `LabConfig` (TPM, Secure Boot, mémoire), passe windowsPE |
 | Pilotes Wi-Fi et Ethernet | dans `$WinPEDriver$` : les pilotes réseau de ce PC, et ceux des cartes les plus courantes (voir plus bas) |
-| Garder le fichier Windows téléchargé | sinon il est supprimé une fois la clé faite |
+| Garder le fichier téléchargé (Windows et Linux) | sinon il est supprimé une fois la clé faite |
 
 Le fichier de réglages est posé dans `sources\$OEM$\$$\Panther\unattend.xml` (et à la racine en `autounattend.xml` quand il y a une passe windowsPE).
 
@@ -45,7 +70,7 @@ Limites : aucun lot ne couvre tout ; les pilotes ne valent que pour les PC à pr
 
 - `src\MainWindow.xaml(.cs)` : la fenêtre, sans droits d'administrateur.
 - `src\Core\Preparation.cs` : le travail en administrateur (`Autoexec.exe --preparer travail.json`), seul à toucher la clé. Il écrit son avancement dans `%LOCALAPPDATA%\Autoexec\travail\etat.txt`.
-- `src\Core\Catalogue.cs`, `Telechargement.cs`, `Wim.cs`, `Reglages.cs`, `Pilotes.cs`, `Cles.cs`, `MiseAJour.cs` : une brique par fichier.
+- `src\Core\Catalogue.cs` (Windows), `Linux.cs` (les quatre distributions), `Telechargement.cs`, `Wim.cs`, `Reglages.cs`, `Pilotes.cs`, `Cles.cs`, `MiseAJour.cs` : une brique par fichier.
 - `src\Textes.cs` : les deux langues de l'appli. Le texte français sert de clé (`Textes.T("…")` dans le code, `{l:T '…'}` dans la fenêtre) ; l'anglais est dans le dictionnaire `Textes.En`.
 - `build.ps1` : fabrique l'exe unique, `dist\Autoexec.exe`.
 - `tools\make-icon.ps1` : régénère `src\Assets\autoexec.ico`.
@@ -61,7 +86,7 @@ src\bin\Debug\net10.0-windows10.0.19041.0\Autoexec.exe --autotest   # rapport : 
 .\build.ps1                                                          # l'exe unique : dist\Autoexec.exe
 ```
 
-L'autotest vérifie tout ce qui se vérifie sans droits d'administrateur ni clé à effacer : catalogue, structure du fichier Windows (lue à distance), reprise de téléchargement, fichier de réglages, script d'effacement, pilotes de ce PC, pilotes des cartes courantes (toujours présents chez Microsoft, à la bonne taille), clés branchées. L'écriture d'une clé se teste avec une vraie clé.
+L'autotest vérifie tout ce qui se vérifie sans droits d'administrateur ni clé à effacer : catalogue, structure du fichier Windows (lue à distance), reprise de téléchargement, dernière version des quatre distributions Linux et de leur version légère (avec un morceau lu à distance), copie exacte et relecture (sur un fichier), fichier de réglages, script d'effacement, pilotes de ce PC, pilotes des cartes courantes (toujours présents chez Microsoft, à la bonne taille), clés branchées. L'écriture d'une clé se teste avec une vraie clé.
 
 ## Publier une version
 
@@ -73,6 +98,10 @@ Au lancement, l'appli demande à GitHub la dernière publication du dépôt (`Mi
 
 ## Sécurité
 
-- Seules les clés sont proposées : disques USB que Windows déclare amovibles, de 7 à 300 Go, qui ne portent pas Windows. Un disque dur ou un SSD externe n'apparaît pas.
+- Seules les clés sont proposées : disques USB que Windows déclare amovibles, jusqu'à 300 Go (au moins 7 Go pour Windows, 3,5 Go pour Linux, 1 Go pour une clé à remettre à neuf), qui ne portent pas Windows. Un disque dur ou un SSD externe n'apparaît pas.
 - Le travail en administrateur revérifie le numéro, le matériel et la taille de la clé juste avant d'effacer.
-- Le lien de téléchargement doit pointer chez Microsoft, et le fichier doit avoir l'empreinte annoncée par le catalogue.
+- Le lien de téléchargement de Windows doit pointer chez Microsoft, et le fichier doit avoir l'empreinte annoncée par le catalogue.
+- Un fichier Linux vient du site de sa distribution (pour Linux Mint, du miroir de kernel.org), en HTTPS, et doit avoir l'empreinte SHA-256 publiée à côté de lui. Son nom ne passe que s'il a exactement la forme attendue.
+- Avant d'effacer, la question nomme la clé ; si une autre clé a pris sa place entre la question et la réponse, rien n'est effacé.
+- Une seule fenêtre et un seul travail à la fois : relancer l'appli ramène la fenêtre déjà ouverte, et un second travail en administrateur est refusé tant que le premier tient le dossier de travail.
+- Un arrêt demandé après le début de l'effacement est dit comme tel : la clé est à refaire.

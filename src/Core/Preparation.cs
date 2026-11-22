@@ -9,13 +9,14 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Autoexec.Core;
 
-/// <summary>Le travail lancé en administrateur (Autoexec.exe --preparer travail.json) : efface la clé puis y pose Windows.
-/// Il raconte où il en est dans etat.txt, que la fenêtre relit ; un fichier « annuler » l'arrête.</summary>
+/// <summary>Le travail lancé en administrateur (Autoexec.exe --preparer travail.json) : efface la clé puis y pose Windows
+/// ou Linux, ou la remet à neuf. Il raconte où il en est dans etat.txt, que la fenêtre relit ; un fichier « annuler » l'arrête.</summary>
 static class Preparation
 {
-    /// <summary>Edition : celle que l'installation prendra sans demander (Core, Professional, Education), ou vide pour qu'elle demande.</summary>
+    /// <summary>Edition : celle que l'installation prendra sans demander (Core, Professional, Education), ou vide pour qu'elle demande.
+    /// Genre : « windows », « linux » (Image est un .iso, copié tel quel) ou « neuf » (clé vidée, sans Image).</summary>
     public record Travail(int Disque, string Chemin, long Taille, string Image, string Edition, string Reglages, bool ReglagesPE, string[] Pilotes, string[] Paquets,
-        string Dossier, bool Anglais);
+        string Dossier, bool Anglais, string Genre = "windows");
 
     class Annule : Exception { }
 
@@ -23,32 +24,58 @@ static class Preparation
     public const long MaxFat32 = 4L * 1024 * 1024 * 1024 - 1;
 
     static string _dossier, _derniere = "";
+    static bool _cleTouchee; // vrai dès que l'effacement de la clé a commencé
 
     public static int Executer(string fichierTravail)
     {
+        FileStream verrou = null;
         try
         {
             var t = JsonSerializer.Deserialize<Travail>(File.ReadAllText(fichierTravail));
             _dossier = t.Dossier;
             Textes.Anglais = t.Anglais; // les messages d'erreur reviennent à la fenêtre : dans sa langue
             Journal.Dossier = Path.GetDirectoryName(t.Dossier.TrimEnd('\\'));
-            Journal.Ecrire($"Préparation : disque {t.Disque}, {t.Taille} octets, {Path.GetFileName(t.Image)}");
+            // Un seul travail à la fois sur ce PC : un travail resté seul (sa fenêtre tuée) continue, et un second, lancé
+            // par une nouvelle fenêtre, écrirait sur la même clé et dans le même dossier.
+            try { verrou = new FileStream(Path.Combine(t.Dossier, "verrou"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException)
+            {
+                Journal.Ecrire("Préparation refusée : une autre est déjà en cours");
+                Dire("erreur", 0, Textes.T("Une autre préparation est déjà en cours sur ce PC. Attends qu'elle soit finie."));
+                _dossier = null; // rien à nettoyer : ce dossier sert à l'autre
+                return 1;
+            }
+            Journal.Ecrire($"Préparation : disque {t.Disque}, {t.Taille} octets, {Path.GetFileName(t.Image) ?? "clé remise à neuf"}");
             Faire(t);
             Journal.Ecrire("Préparation terminée");
             return 0;
         }
-        catch (Annule) { Journal.Ecrire("Préparation annulée"); Dire("erreur", 0, "annule"); return 2; }
+        catch (Annule)
+        {
+            // la fenêtre doit savoir si la clé était déjà entamée : elle n'est alors plus utilisable telle quelle
+            Journal.Ecrire(_cleTouchee ? "Préparation annulée, clé déjà effacée" : "Préparation annulée, clé intacte");
+            Dire("erreur", 0, _cleTouchee ? "annule-efface" : "annule");
+            return 2;
+        }
         catch (Exception ex)
         {
             Journal.Ecrire("Préparation échouée : " + ex);
             Dire("erreur", 0, ex is InvalidOperationException ? ex.Message : Textes.T("Une erreur est survenue pendant la préparation."));
             return 1;
         }
-        finally { Nettoyer(); }
+        finally { Nettoyer(); verrou?.Dispose(); }
     }
 
     static void Faire(Travail t)
     {
+        if (t.Genre == "linux") { CopieExacte(t); return; }
+        if (t.Genre == "neuf")
+        {
+            Dire("cle", 0);
+            Vider(Effacer(t, "neuf"));
+            Dire("fin", 100);
+            return;
+        }
         Dire("windows", 0);
         VerifierCle(t); // inutile de préparer Windows si la clé n'est plus là
         var images = Wim.Images(t.Image);
@@ -74,18 +101,24 @@ static class Preparation
         // téléchargé (mesuré : 4,684 Go pour 4,688). S'il dépasse, Windows passe donc par un .wim découpé en install.swm,
         // install2.swm… que l'installation sait relire (c'est aussi ce que fait Rufus). C'est le cas de Windows 11.
         bool decoupe = new FileInfo(t.Image).Length > MaxFat32;
+        // Le .wim à découper est compressé vite sur une clé qui a la place (16 Go et plus), au maximum sur une clé de 8 Go.
+        // Mesuré sur Windows 11, mêmes conditions : 4 min 51 s et 6,5 Go en rapide, contre 8 min 58 s et 6,0 Go au maximum.
+        bool rapide = decoupe && t.Taille > 15_000_000_000;
         var install = decoupe ? Path.Combine(t.Dossier, "install.wim") : Path.Combine(sources, "install.esd");
         File.Delete(install);
+        // part de la jauge : la première édition porte presque toutes les données, les suivantes n'ajoutent que leurs différences
+        double finPremiere = rapide ? 74 : 65, finEditions = rapide ? 84 : 92;
         for (int i = 0; i < editions.Count; i++)
         {
-            // la première édition porte presque toutes les données ; les suivantes n'ajoutent que leurs différences
-            double debut = i == 0 ? 20 : 65 + 27.0 * (i - 1) / Math.Max(1, editions.Count - 1), part = i == 0 ? 45 : 27.0 / Math.Max(1, editions.Count - 1);
-            Dism($"/Export-Image /SourceImageFile:\"{t.Image}\" /SourceIndex:{editions[i]} /DestinationImageFile:\"{install}\" /Compress:{(decoupe ? "max" : "recovery")}",
+            double suivantes = (finEditions - finPremiere) / Math.Max(1, editions.Count - 1);
+            double debut = i == 0 ? 20 : finPremiere + suivantes * (i - 1), part = i == 0 ? finPremiere - 20 : suivantes;
+            Dism($"/Export-Image /SourceImageFile:\"{t.Image}\" /SourceIndex:{editions[i]} /DestinationImageFile:\"{install}\" /Compress:{(rapide ? "fast" : decoupe ? "max" : "recovery")}",
                 p => Dire("windows", debut + part * p / 100));
         }
         if (decoupe)
         {
-            Dism($"/Split-Image /ImageFile:\"{install}\" /SWMFile:\"{Path.Combine(sources, "install.swm")}\" /FileSize:3800", p => Dire("windows", 92 + p * 0.08));
+            Dism($"/Split-Image /ImageFile:\"{install}\" /SWMFile:\"{Path.Combine(sources, "install.swm")}\" /FileSize:3800",
+                p => Dire("windows", finEditions + p * (100 - finEditions) / 100));
             File.Delete(install);
         }
         Dire("windows", 100);
@@ -140,27 +173,7 @@ static class Preparation
 
         // 3. La clé n'est effacée qu'ici, juste après un dernier contrôle : même numéro, même matériel, même taille.
         Dire("cle", 0);
-        SiAnnule();
-        char lettre = LettreLibre();
-        bool prete = false;
-        for (int essai = 0; essai < 2 && !prete; essai++)
-        {
-            if (essai > 0) Thread.Sleep(3000); // clé tenue un instant par un autre programme : second essai complet
-            VerifierCle(t);
-            if (Diskpart(ScriptEffacer(t.Disque, t.Taille)) != 0) continue;
-            // en deux temps : juste après la création de la partition, Windows n'a pas toujours rattaché son volume
-            // (« aucun volume n'est sélectionné », vu sur une SanDisk 115 Go) ; on laisse quelques secondes, deux fois au besoin
-            for (int format = 0; format < 2 && !prete; format++)
-            {
-                Thread.Sleep(3000);
-                prete = Diskpart(ScriptFormater(t.Disque, lettre)) == 0;
-            }
-        }
-        var volume = new DriveInfo($"{lettre}:");
-        for (int i = 0; prete && i < 40 && !(volume.IsReady && volume.DriveFormat == "FAT32"); i++) Thread.Sleep(500);
-        if (!prete || !volume.IsReady || volume.DriveFormat != "FAT32")
-            throw new InvalidOperationException(Textes.T("La clé n'a pas pu être effacée. Débranche-la, rebranche-la et réessaie."));
-        NoterPartition(t.Disque);
+        char lettre = Effacer(t, "windows");
         Dire("cle", 100);
 
         // 4. Copie d'un bloc sur la clé. Une clé qui décroche un instant ne fait pas tout perdre : le fichier en cours est repris.
@@ -202,7 +215,264 @@ static class Preparation
                 throw new InvalidOperationException(Textes.T("La copie sur la clé est incomplète. Recommence, ou essaie une autre clé."));
         }
         Vider(lettre);
+
+        // 5. Relecture de toute la clé, comparée fichier par fichier à ce qui vient d'y être copié : une clé qui rend autre
+        //    chose que ce qu'on y écrit (clé usée, ou de fausse capacité) n'est pas dite « prête ».
+        Dire("verif", 0);
+        long relu = 0;
+        try
+        {
+            foreach (var f in fichiers)
+            {
+                bool pareil = Identiques(f.FullName, Path.Combine($@"{lettre}:\", Path.GetRelativePath(media, f.FullName)),
+                    n => { relu += n; Dire("verif", 100.0 * relu / Math.Max(1, total)); SiAnnule(); });
+                if (pareil) continue;
+                Journal.Ecrire($"Vérification : {Path.GetRelativePath(media, f.FullName)} diffère sur la clé");
+                throw new InvalidOperationException(Textes.T("La clé ne garde pas ce qu'on y écrit. Essaie une autre clé."));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Journal.Ecrire("Relecture de la clé interrompue : " + ex.Message);
+            throw new InvalidOperationException(Textes.T("La clé ne répond plus. Rebranche-la et recommence."));
+        }
         Dire("fin", 100, lettre.ToString());
+    }
+
+    /// <summary>Un fichier et sa copie sur la clé ont-ils le même contenu ? La copie est lue sans passer par la mémoire de
+    /// Windows, qui rendrait sinon ce qu'il vient d'écrire et non ce que la clé a gardé.</summary>
+    public static bool Identiques(string source, string copie, Action<int> avance)
+    {
+        const int Lot = 4 << 20, Secteur = 4096;
+        using var a = File.OpenHandle(source, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
+        using var b = File.OpenHandle(copie, FileMode.Open, FileAccess.Read, FileShare.Read, (FileOptions)0x20000000); // FILE_FLAG_NO_BUFFERING
+        long longueur = RandomAccess.GetLength(a);
+        if (RandomAccess.GetLength(b) != longueur) return false;
+        // une lecture sans tampon exige une mémoire qui commence sur une frontière de secteur : on la prend dans un tableau
+        // que le ramasse-miettes ne déplace pas, à partir du premier octet bien placé
+        byte[] x = new byte[Lot], brut = GC.AllocateUninitializedArray<byte>(Lot + Secteur, pinned: true);
+        int debut = (int)((Secteur - Marshal.UnsafeAddrOfPinnedArrayElement(brut, 0).ToInt64() % Secteur) % Secteur);
+        for (long position = 0; position < longueur;)
+        {
+            int n = 0, lu;
+            while (n < Lot && (lu = RandomAccess.Read(a, x.AsSpan(n), position + n)) > 0) n += lu;
+            // toujours un lot entier demandé (multiple du secteur) : la clé rend ce qui reste du fichier
+            if (n == 0 || RandomAccess.Read(b, brut.AsSpan(debut, Lot), position) < n || !x.AsSpan(0, n).SequenceEqual(brut.AsSpan(debut, n))) return false;
+            position += n;
+            avance?.Invoke(n);
+        }
+        return true;
+    }
+
+    /// <summary>Efface la clé. « windows » : clé d'installation, FAT32 « AUTOEXEC » de 32 Go au plus, partition active.
+    /// « neuf » : toute la clé, sans nom, en exFAT au-delà de 32 Go (Windows refuse d'y mettre du FAT32).
+    /// « linux » : clé seulement vidée, sans partition ni lettre (rend alors '\0').</summary>
+    static char Effacer(Travail t, string genre)
+    {
+        SiAnnule();
+        bool neuf = genre == "neuf";
+        string format = genre == "linux" ? null : neuf && t.Taille > 33_500_000_000 ? "exFAT" : "FAT32";
+        char lettre = format == null ? '\0' : LettreLibre(); // s'il n'en reste aucune, autant le savoir avant d'effacer
+        VerifierCle(t);
+        _cleTouchee = true;
+        bool prete = EffacerVite(t, format, neuf, ref lettre);
+        // diskpart, plus lent, reste le filet de sécurité : c'est lui qui a fait toutes les clés jusqu'à la version 1.0
+        for (int essai = 0; essai < 2 && !prete; essai++)
+        {
+            if (essai > 0) Thread.Sleep(3000); // clé tenue un instant par un autre programme : second essai complet
+            VerifierCle(t);
+            if (Diskpart(ScriptEffacer(t.Disque, neuf ? 0 : t.Taille, format != null)) != 0) continue;
+            prete = format == null;
+            // en deux temps : juste après la création de la partition, Windows n'a pas toujours rattaché son volume
+            // (« aucun volume n'est sélectionné », vu sur une SanDisk 115 Go) ; on laisse quelques secondes, deux fois au besoin
+            for (int passe = 0; passe < 2 && !prete; passe++)
+            {
+                Thread.Sleep(3000);
+                lettre = LettreLibre(); // choisie au dernier moment : une lettre libre il y a une minute peut ne plus l'être
+                prete = Diskpart(ScriptFormater(t.Disque, lettre, neuf ? format : null)) == 0;
+            }
+        }
+        if (format != null)
+        {
+            var volume = new DriveInfo($"{lettre}:");
+            for (int i = 0; prete && i < 40 && !(volume.IsReady && volume.DriveFormat == format); i++) Thread.Sleep(500);
+            prete &= volume.IsReady && volume.DriveFormat == format;
+        }
+        if (!prete) throw new InvalidOperationException(Textes.T("La clé n'a pas pu être effacée. Débranche-la, rebranche-la et réessaie."));
+        NoterPartition(t.Disque);
+        return lettre;
+    }
+
+    /// <summary>Le même effacement par le service de stockage de Windows : une dizaine de secondes, contre une minute par
+    /// diskpart, qui en met déjà vingt à démarrer (mesuré le 22/11/2026). Rend faux si Windows refuse : diskpart prend le relais.</summary>
+    static bool EffacerVite(Travail t, string format, bool neuf, ref char lettre)
+    {
+        const string stockage = @"root\Microsoft\Windows\Storage";
+        static ManagementObject Un(string requete)
+        {
+            using var s = new ManagementObjectSearcher(stockage, requete);
+            return s.Get().Cast<ManagementObject>().FirstOrDefault() ?? throw new IOException("rien pour " + requete);
+        }
+        static void Appeler(ManagementObject objet, string methode, params (string Nom, object Valeur)[] reglages)
+        {
+            using var entree = objet.GetMethodParameters(methode);
+            foreach (var (nom, valeur) in reglages) entree[nom] = valeur;
+            using var sortie = objet.InvokeMethod(methode, entree, null);
+            if (Convert.ToUInt32(sortie["ReturnValue"]) is var code and not 0) throw new IOException($"{methode} : code {code}");
+        }
+        var chrono = Stopwatch.StartNew();
+        try
+        {
+            string disque = $"SELECT * FROM MSFT_Disk WHERE Number = {t.Disque}";
+            // Sur une clé en MBR, « Clear » réécrit lui-même le premier secteur, code de démarrage des vieux PC compris, et efface
+            // ce qui reste d'une ancienne table. Une clé en GPT (une clé Linux) passe donc d'abord en MBR, puis est vidée une
+            // seconde fois. Jamais de passage par GPT : il laisse le premier secteur sans code de démarrage (mesuré le 22/11/2026).
+            using (var d = Un(disque)) Appeler(d, "Clear", ("RemoveData", true), ("RemoveOEM", true));
+            using (var d = Un(disque))
+                if (Convert.ToInt32(d["PartitionStyle"]) == 2)
+                {
+                    Appeler(d, "ConvertStyle", ("PartitionStyle", (ushort)1));
+                    using var mbr = Un(disque);
+                    Appeler(mbr, "Clear", ("RemoveData", true), ("RemoveOEM", true));
+                }
+            using (var d = Un(disque))
+            {
+                // une clé formatée d'un bloc, sans table de partitions, garde son volume après « Clear » : diskpart sait la vider
+                if (Convert.ToInt32(d["PartitionStyle"]) != 1 || Convert.ToInt32(d["NumberOfPartitions"]) != 0) throw new IOException("la clé n'est pas vide");
+                if (format != null)
+                    Appeler(d, "CreatePartition", !neuf && t.Taille > 33_500_000_000 ? ("Size", (object)(32000UL << 20)) : ("UseMaximumSize", (object)true),
+                        ("MbrType", (ushort)(format == "FAT32" ? 12 : 7)), ("IsActive", !neuf));
+            }
+            if (format != null)
+            {
+                using var partition = Un($"SELECT * FROM MSFT_Partition WHERE DiskNumber = {t.Disque}");
+                // Windows met parfois quelques secondes à rattacher son volume à une partition toute neuve
+                ManagementObject volume = null;
+                for (int i = 0; i < 40 && (volume = partition.GetRelated("MSFT_Volume").Cast<ManagementObject>().FirstOrDefault()) == null; i++) Thread.Sleep(250);
+                using (volume ?? throw new IOException("volume introuvable"))
+                    Appeler(volume, "Format", neuf ? [("FileSystem", format), ("Full", false), ("Force", true)]
+                        : [("FileSystem", format), ("FileSystemLabel", "AUTOEXEC"), ("Full", false), ("Force", true)]);
+                lettre = LettreLibre(); // choisie au dernier moment
+                Appeler(partition, "AddAccessPath", ("AccessPath", $"{lettre}:"));
+                // dernier contrôle, lu sur la clé elle-même : table MBR, code de démarrage présent, plus de table GPT derrière
+                var debut = new byte[4096];
+                using (var brut = CreateFile($@"\\.\PhysicalDrive{t.Disque}", 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero))
+                    if (brut.IsInvalid || RandomAccess.Read(brut, debut, 0) < 1024) throw new IOException("premier secteur illisible");
+                if (debut[510] != 0x55 || debut[511] != 0xAA || debut.Take(440).Count(o => o != 0) < 100 || Encoding.ASCII.GetString(debut, 512, 8) == "EFI PART")
+                    throw new IOException("premier secteur inattendu");
+            }
+            Journal.Ecrire($"Clé effacée par le service de stockage en {chrono.Elapsed.TotalSeconds:0.0} s");
+            return true;
+        }
+        catch (Exception ex) when (ex is ManagementException or IOException or COMException or InvalidCastException or UnauthorizedAccessException)
+        {
+            Journal.Ecrire($"Effacement par le service de stockage refusé après {chrono.Elapsed.TotalSeconds:0.0} s, diskpart prend le relais : {ex.Message}");
+            return false;
+        }
+    }
+
+    public const int Bloc = 32 << 20;
+
+    /// <summary>Linux : le fichier .iso est copié tel quel sur la clé, secteur par secteur. C'est ce que demandent Ubuntu, Mint,
+    /// Debian et Fedora : leur fichier est déjà l'image d'une clé qui démarre, sur les PC récents comme sur les anciens.</summary>
+    static void CopieExacte(Travail t)
+    {
+        // ouvert avant d'effacer : un fichier devenu illisible ne doit rien coûter à la clé
+        using var image = File.OpenHandle(t.Image);
+        long taille = RandomAccess.GetLength(image);
+        if (taille + Bloc > t.Taille)
+            throw new InvalidOperationException(Textes.T("La clé est trop petite : il faut au moins {0} Go.", Math.Ceiling((taille + Bloc) / 1e9)));
+        Dire("cle", 0);
+        SiAnnule();
+        // clé vidée de toutes ses partitions : Windows n'a alors plus aucun volume à protéger contre l'écriture directe
+        Effacer(t, "linux");
+        VerifierCle(t);
+        Dire("cle", 100);
+        try
+        {
+            using var cle = CreateFile($@"\\.\PhysicalDrive{t.Disque}", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            if (cle.IsInvalid) throw new IOException($"ouverture de la clé refusée (erreur Windows {Marshal.GetLastWin32Error()})");
+            Copier(image, cle, taille);
+            // La clé est éjectée, comme le fait Etcher. Tant qu'elle reste lisible, Windows la relit au moindre événement de
+            // disque : il réécrit alors un secteur de sa table (vu le 22/11/2026 : Fedora refuse ensuite son propre contrôle
+            // au démarrage), lui donne une lettre et propose de la formater.
+#if !SANS_EJECTION // un essai qui doit relire la clé juste après se compile sans l'éjection (dotnet build -p:DefineConstants=SANS_EJECTION)
+            if (!DeviceIoControl(cle, 0x2D4808, IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero)) // IOCTL_STORAGE_EJECT_MEDIA
+                Journal.Ecrire($"Éjection de la clé refusée (erreur Windows {Marshal.GetLastWin32Error()})");
+            else Journal.Ecrire("Clé éjectée");
+#endif
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Journal.Ecrire("Copie exacte interrompue : " + ex.Message);
+            throw new InvalidOperationException(Textes.T("La clé ne répond plus. Rebranche-la et recommence."));
+        }
+        Dire("fin", 100);
+    }
+
+    /// <summary>Copie l'image sur la clé, puis relit la clé et la compare à l'image, bloc par bloc.
+    /// Sans « ecrire » : la comparaison seule.</summary>
+    public static void Copier(SafeFileHandle image, SafeFileHandle cle, long taille, bool ecrire = true)
+    {
+        byte[][] tampons = [new byte[Bloc], new byte[Bloc]];
+        var relu = new byte[Bloc];
+        Action<string> noter = _dossier == null ? _ => { } : Journal.Ecrire; // l'autotest n'écrit pas dans le journal de l'appli
+        // un disque ne s'écrit et ne se relit que par secteurs entiers : la fin du dernier bloc est complétée par des zéros
+        int Charger(byte[] tampon, long position)
+        {
+            int n = 0, lu;
+            while (n < Bloc && (lu = RandomAccess.Read(image, tampon.AsSpan(n), position + n)) > 0) n += lu;
+            Array.Clear(tampon, n, Bloc - n);
+            return (n + 4095) / 4096 * 4096;
+        }
+        void Ecrire(byte[] tampon, int n, long position) => RandomAccess.Write(cle, tampon.AsSpan(0, n), position);
+        void Comparer(byte[] tampon, int n, long position)
+        {
+            int fait = 0, lu;
+            while (fait < n && (lu = RandomAccess.Read(cle, relu.AsSpan(fait, n - fait), position + fait)) > 0) fait += lu;
+            if (fait == n && tampon.AsSpan(0, n).SequenceEqual(relu.AsSpan(0, n))) return;
+            noter($"Vérification : la clé diffère de l'image dans le bloc qui commence à l'octet {position}");
+            throw new InvalidOperationException(Textes.T("La clé ne garde pas ce qu'on y écrit. Essaie une autre clé."));
+        }
+        // Tous les blocs sauf le premier. Pendant qu'un bloc part sur la clé (ou en revient), le suivant est déjà lu sur le
+        // disque du PC : les deux lectures ne s'attendent pas l'une l'autre.
+        void Parcourir(string etape, Action<byte[], int, long> faire)
+        {
+            var chrono = Stopwatch.StartNew();
+            var lecture = Task.FromResult(0);
+            try
+            {
+                if (Bloc < taille) lecture = Task.Run(() => Charger(tampons[0], Bloc));
+                for (long position = Bloc, i = 0; position < taille; position += Bloc, i++)
+                {
+                    int n = lecture.GetAwaiter().GetResult();
+                    long suivante = position + Bloc;
+                    var autre = tampons[(i + 1) % 2];
+                    if (suivante < taille) lecture = Task.Run(() => Charger(autre, suivante));
+                    faire(tampons[i % 2], n, position);
+                    Dire(etape, Math.Min(100, 100.0 * suivante / taille));
+                    SiAnnule();
+                }
+            }
+            finally { try { lecture.Wait(); } catch { } } // aucune lecture ne doit survivre à la fermeture du fichier
+            noter($"{etape} : {taille - Bloc} octets en {chrono.Elapsed.TotalSeconds:0} s");
+        }
+        // Le premier bloc porte la table des partitions : il part en dernier. Tant qu'il manque, Windows ne voit sur la clé
+        // aucune partition : il n'en ouvre donc aucune (ce qui bloquerait l'écriture) et n'y écrit rien de lui-même (ce qui
+        // fausserait la comparaison).
+        if (ecrire)
+        {
+            Parcourir("copie", Ecrire);
+            if (!FlushFileBuffers(cle)) noter($"Vidage de la clé non confirmé (erreur Windows {Marshal.GetLastWin32Error()}) : la relecture tranchera");
+        }
+        Parcourir("verif", Comparer);
+        int premier = Charger(tampons[0], 0);
+        if (ecrire)
+        {
+            Ecrire(tampons[0], premier, 0);
+            FlushFileBuffers(cle);
+        }
+        Comparer(tampons[0], premier, 0);
     }
 
     /// <summary>La clé visée est-elle toujours la même ? (Cles.Lister écarte déjà tout disque du système et tout disque dur.)</summary>
@@ -238,13 +508,17 @@ static class Preparation
         return (demarrage, editions);
     }
 
-    public static string ScriptEffacer(int disque, long taille) => string.Join("\r\n",
-        $"select disk {disque}", "clean", "convert mbr",
-        // Windows refuse de formater en FAT32 au-delà de 32 Go : sur une grosse clé, la partition s'arrête là
-        "create partition primary" + (taille > 33_500_000_000 ? " size=32000" : ""), "exit", "");
+    public static string ScriptEffacer(int disque, long taille, bool partition = true) => string.Join("\r\n",
+        new[] { $"select disk {disque}", "clean" }
+            // Windows refuse de formater en FAT32 au-delà de 32 Go : sur une grosse clé, la partition s'arrête là
+            .Concat(partition ? ["convert mbr", "create partition primary" + (taille > 33_500_000_000 ? " size=32000" : "")] : [])
+            .Concat(["exit", ""]));
 
-    public static string ScriptFormater(int disque, char lettre) => string.Join("\r\n",
-        $"select disk {disque}", "select partition 1", "format fs=fat32 quick label=AUTOEXEC", "active", $"assign letter={lettre}", "exit", "");
+    /// <summary>Sans « format » : la clé d'installation de Windows. Avec (FAT32 ou exFAT) : une clé remise à neuf, sans nom.</summary>
+    public static string ScriptFormater(int disque, char lettre, string format = null) => string.Join("\r\n",
+        new[] { $"select disk {disque}", "select partition 1" }
+            .Concat(format == null ? ["format fs=fat32 quick label=AUTOEXEC", "active"] : [$"format fs={format.ToLowerInvariant()} quick"])
+            .Concat([$"assign letter={lettre}", "exit", ""]));
 
     static int Diskpart(string script)
     {
@@ -319,7 +593,7 @@ static class Preparation
             catch (IOException) { Thread.Sleep(40); }
     }
 
-    static void SiAnnule() { if (File.Exists(Path.Combine(_dossier, FichierAnnuler))) throw new Annule(); }
+    static void SiAnnule() { if (_dossier != null && File.Exists(Path.Combine(_dossier, FichierAnnuler))) throw new Annule(); }
 
     /// <summary>Les fichiers sortis par DISM appartiennent à l'administrateur : c'est à lui de les retirer.</summary>
     static void Nettoyer()
@@ -345,6 +619,8 @@ static class Preparation
     static extern SafeFileHandle CreateFile(string nom, uint acces, uint partage, IntPtr securite, uint creation, uint attributs, IntPtr modele);
     [DllImport("kernel32", SetLastError = true)]
     static extern bool FlushFileBuffers(SafeFileHandle h);
+    [DllImport("kernel32", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle h, uint code, IntPtr entree, uint tailleEntree, IntPtr sortie, uint tailleSortie, out uint rendus, IntPtr attente);
 
     /// <summary>Force l'écriture de tout ce qui attend encore en mémoire : la clé peut être retirée juste après.</summary>
     static void Vider(char lettre)

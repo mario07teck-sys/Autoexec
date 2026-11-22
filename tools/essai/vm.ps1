@@ -4,7 +4,8 @@
 #   -Touches 'TAB,ENTER,ALT+N,SHIFT+TAB'       frappe ces touches dans l'ordre
 #   -Texte 'test'                              tape un texte ; la machine le lit comme un clavier americain : s'en tenir aux lettres communes a AZERTY (pas a q w z m)
 #   -SansTpm (avec -Creer)                     machine sans TPM ni Secure Boot : celle que Windows 11 refuse sans le reglage "PC sans TPM"
-param([string]$Nom = 'Autoexec-essai', [switch]$Creer, [switch]$SansTpm, [string]$Cle, [string]$Dossier, [string]$Capture, [string]$Touches, [string]$Texte, [int]$Pause = 400)
+#   -Linux (avec -Creer)                       Secure Boot regle pour Linux (certificat Microsoft des autres systemes), au lieu de celui de Windows
+param([string]$Nom = 'Autoexec-essai', [switch]$Creer, [switch]$SansTpm, [switch]$Linux, [string]$Cle, [string]$Dossier, [string]$Capture, [string]$Touches, [string]$Texte, [int]$Pause = 400)
 $ErrorActionPreference = 'Stop'
 $ns = 'root\virtualization\v2'
 if ($Creer) {
@@ -17,7 +18,7 @@ if ($Creer) {
   $disqueCle = Get-VMHardDiskDrive -VMName $Nom | Where-Object Path -eq $Cle
   if ($SansTpm) { Set-VMFirmware -VMName $Nom -EnableSecureBoot Off -FirstBootDevice $disqueCle }
   else {
-    Set-VMFirmware -VMName $Nom -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows -FirstBootDevice $disqueCle
+    Set-VMFirmware -VMName $Nom -EnableSecureBoot On -SecureBootTemplate $(if ($Linux) { 'MicrosoftUEFICertificateAuthority' } else { 'MicrosoftWindows' }) -FirstBootDevice $disqueCle
     Set-VMKeyProtector -VMName $Nom -NewLocalKeyProtector
     Enable-VMTPM -VMName $Nom
   }
